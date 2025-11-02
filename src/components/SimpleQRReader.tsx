@@ -9,7 +9,15 @@ export default function SimpleQRReader() {
   const [ineData, setIneData] = useState<INEData | null>(null);
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [zoom, setZoom] = useState(1);
+  const [isScanning, setIsScanning] = useState(true);
   const dbg = new AUPDebugger("SimpleQRReader");
+
+  const resetReader = () => {
+    setResult(null);
+    setIneData(null);
+    setIsScanning(true);
+    setDebugLog((prev) => [...prev, "Reiniciando escaner..."]);
+  };
 
   useEffect(() => {
     const reader = new BrowserMultiFormatReader();
@@ -44,11 +52,19 @@ export default function SimpleQRReader() {
         }
 
         return reader.decodeFromVideoDevice(undefined, videoRef.current!, (res, err) => {
-          if (!active) return;
+          if (!active || !isScanning) return;
 
           if (res) {
             const text = res.getText();
             console.log("TEXTO DETECTADO:", text);
+            
+            // DETENER ESCANEO
+            setIsScanning(false);
+            
+            // Mostrar info del texto en debug log
+            const parts = text.split('|');
+            setDebugLog((prev) => [...prev, "Codigo detectado - " + parts.length + " campos"]);
+            setDebugLog((prev) => [...prev, "Primeros campos: " + parts.slice(0, 3).join(' / ')]);
             
             const parsed = parseINECredential(text);
             console.log("RESULTADO PARSE:", parsed);
@@ -57,12 +73,14 @@ export default function SimpleQRReader() {
               console.log("ES INE! Seteando ineData...");
               setIneData(parsed);
               setResult(null);
-              setDebugLog((prev) => [...prev, "INE: " + parsed.nombres + " " + parsed.apellidoPaterno]);
+              setDebugLog((prev) => [...prev, "INE DETECTADA: " + parsed.nombres + " " + parsed.apellidoPaterno]);
+              setDebugLog((prev) => [...prev, "ESCANEO PAUSADO - Presiona 'Escanear Otra' para continuar"]);
             } else {
               console.log("NO es INE, es codigo normal");
               setIneData(null);
               setResult(text);
-              setDebugLog((prev) => [...prev, "Codigo: " + text.substring(0, 40)]);
+              setDebugLog((prev) => [...prev, "Codigo normal (no INE): " + text.substring(0, 40)]);
+              setDebugLog((prev) => [...prev, "ESCANEO PAUSADO - Presiona 'Escanear Otra' para continuar"]);
             }
           }
 
@@ -90,7 +108,7 @@ export default function SimpleQRReader() {
         }
       } catch (e) {}
     };
-  }, [zoom]);
+  }, [zoom, isScanning]);
 
   const handleZoomChange = (newZoom: number) => {
     setZoom(newZoom);
@@ -105,6 +123,7 @@ export default function SimpleQRReader() {
 
   console.log("RENDER - ineData:", ineData);
   console.log("RENDER - result:", result);
+  console.log("RENDER - isScanning:", isScanning);
 
   return (
     <div style={{ textAlign: "center", padding: "10px" }}>
@@ -120,13 +139,22 @@ export default function SimpleQRReader() {
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85em", color: "#666", marginTop: "5px" }}>
           <button onClick={() => handleZoomChange(1)}
             style={{ padding: "5px 15px", borderRadius: "4px", border: "1px solid #ccc", background: "#fff", cursor: "pointer" }}>
-            Reset
+            Reset Zoom
           </button>
           <span>Ajusta el zoom</span>
         </div>
       </div>
       
-      <video ref={videoRef} autoPlay muted playsInline style={{ width: "90%", maxWidth: 600, border: "2px solid #333", borderRadius: "8px" }} />
+      <video ref={videoRef} autoPlay muted playsInline style={{ width: "90%", maxWidth: 600, border: "2px solid #333", borderRadius: "8px", opacity: isScanning ? 1 : 0.5 }} />
+      
+      {!isScanning && (
+        <div style={{ marginTop: "15px" }}>
+          <button onClick={resetReader}
+            style={{ padding: "12px 30px", fontSize: "1.1em", borderRadius: "8px", border: "2px solid #667eea", background: "#667eea", color: "white", cursor: "pointer", fontWeight: "bold" }}>
+            Escanear Otra Credencial
+          </button>
+        </div>
+      )}
       
       {ineData && (
         <div style={{ background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", color: "white", padding: "20px", borderRadius: "12px", margin: "20px auto", maxWidth: "600px", textAlign: "left", boxShadow: "0 4px 6px rgba(0,0,0,0.3)" }}>
@@ -149,7 +177,7 @@ export default function SimpleQRReader() {
       
       {!ineData && result && (
         <div style={{ background: "#e0ffe0", padding: "15px", borderRadius: "8px", margin: "20px auto", maxWidth: "600px" }}>
-          <strong>Codigo detectado:</strong>
+          <strong>Codigo detectado (no INE):</strong>
           <pre style={{ marginTop: "10px", whiteSpace: "pre-wrap", textAlign: "left", fontSize: "0.9em" }}>{result}</pre>
         </div>
       )}
