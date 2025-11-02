@@ -8,6 +8,7 @@ export default function SimpleQRReader() {
   const [result, setResult] = useState<string | null>(null);
   const [ineData, setIneData] = useState<INEData | null>(null);
   const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [zoom, setZoom] = useState(1);
   const dbg = new AUPDebugger("SimpleQRReader");
 
   useEffect(() => {
@@ -17,41 +18,73 @@ export default function SimpleQRReader() {
     dbg.log("Inicializando cámara y lector...");
     setDebugLog((prev) => [...prev, "🔄 Iniciando..."]);
 
-    // Try to start the camera
-    reader.decodeFromVideoDevice(undefined, videoRef.current!, (res, err) => {
-      if (!active) return;
+    // Configuración para cámara con mayor resolución y cámara trasera en móviles
+    const constraints = {
+      video: {
+        facingMode: "environment",
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
+      }
+    };
 
-      if (res) {
-        const text = res.getText();
-        dbg.log("📦 Resultado detectado: " + text.substring(0, 100));
-        
-        // Detectar si es credencial INE (formato con pipes)
-        const parsed = parseINECredential(text);
-        if (parsed) {
-          dbg.log("🆔 Credencial INE detectada");
-          setIneData(parsed);
-          setResult(formatINEData(parsed));
-          setDebugLog((prev) => [...prev, "🆔 Credencial INE leída correctamente"]);
-        } else {
-          setIneData(null);
-          setResult(text);
-          setDebugLog((prev) => [...prev, "✔️ Código leído: " + text.substring(0, 50)]);
+    // Iniciar cámara con configuración
+    navigator.mediaDevices.getUserMedia(constraints)
+      .then(stream => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          
+          // Intentar habilitar zoom si está disponible
+          const videoTrack = stream.getVideoTracks()[0];
+          const capabilities = videoTrack.getCapabilities() as any;
+          
+          if (capabilities.zoom) {
+            dbg.log("📸 Zoom disponible en este dispositivo");
+            setDebugLog((prev) => [...prev, "📸 Zoom disponible"]);
+            
+            // Aplicar zoom inicial
+            videoTrack.applyConstraints({
+              advanced: [{ zoom: zoom } as any]
+            }).catch(() => {});
+          }
         }
-      }
 
-      // Only log errors that are NOT "code not found" errors
-      if (err && err.name !== 'NotFoundException' && !err.message?.includes('No MultiFormat Readers')) {
-        dbg.error("⚠️ Error al decodificar: " + (err.message || String(err)));
-        setDebugLog((prev) => [...prev, "❌ Error: " + (err.message || String(err))]);
-      }
-    }).then(() => {
-      dbg.log("✅ Cámara iniciada correctamente");
-      setDebugLog((prev) => [...prev, "✅ Cámara lista - esperando código..."]);
-    }).catch((error: any) => {
-      dbg.error("❌ Error al iniciar cámara: " + (error.message || String(error)));
-      setDebugLog((prev) => [...prev, "❌ ERROR CÁMARA: " + (error.message || String(error))]);
-      setDebugLog((prev) => [...prev, "💡 Verifica permisos de cámara en el navegador"]);
-    });
+        // Iniciar detección
+        return reader.decodeFromVideoDevice(undefined, videoRef.current!, (res, err) => {
+          if (!active) return;
+
+          if (res) {
+            const text = res.getText();
+            dbg.log("📦 Resultado detectado: " + text.substring(0, 100));
+            
+            // Detectar si es credencial INE (formato con pipes)
+            const parsed = parseINECredential(text);
+            if (parsed) {
+              dbg.log("🆔 Credencial INE detectada");
+              setIneData(parsed);
+              setResult(formatINEData(parsed));
+              setDebugLog((prev) => [...prev, "🆔 Credencial INE leída correctamente"]);
+            } else {
+              setIneData(null);
+              setResult(text);
+              setDebugLog((prev) => [...prev, "✔️ Código leído: " + text.substring(0, 50)]);
+            }
+          }
+
+          if (err && err.name !== 'NotFoundException' && !err.message?.includes('No MultiFormat Readers')) {
+            dbg.error("⚠️ Error al decodificar: " + (err.message || String(err)));
+            setDebugLog((prev) => [...prev, "❌ Error: " + (err.message || String(err))]);
+          }
+        });
+      })
+      .then(() => {
+        dbg.log("✅ Cámara iniciada correctamente");
+        setDebugLog((prev) => [...prev, "✅ Cámara lista - esperando código..."]);
+      })
+      .catch((error: any) => {
+        dbg.error("❌ Error al iniciar cámara: " + (error.message || String(error)));
+        setDebugLog((prev) => [...prev, "❌ ERROR CÁMARA: " + (error.message || String(error))]);
+        setDebugLog((prev) => [...prev, "💡 Verifica permisos de cámara en el navegador"]);
+      });
 
     return () => {
       dbg.log("Deteniendo lector...");
@@ -60,15 +93,65 @@ export default function SimpleQRReader() {
         if (typeof (reader as any).reset === 'function') {
           (reader as any).reset();
         }
+        // Detener stream de video
+        if (videoRef.current?.srcObject) {
+          const stream = videoRef.current.srcObject as MediaStream;
+          stream.getTracks().forEach(track => track.stop());
+        }
       } catch (e) {
         // ignore
       }
     };
-  }, []);
+  }, [zoom]);
+
+  const handleZoomChange = (newZoom: number) => {
+    setZoom(newZoom);
+    
+    // Aplicar zoom si el dispositivo lo soporta
+    if (videoRef.current?.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      const videoTrack = stream.getVideoTracks()[0];
+      videoTrack.applyConstraints({
+        advanced: [{ zoom: newZoom } as any]
+      }).catch(() => {});
+    }
+  };
 
   return (
     <div style={{ textAlign: "center" }}>
       <h2>🧪 Lector QR / PDF417 con soporte INE</h2>
+      
+      {/* Controles de Zoom para Móvil */}
+      <div style={{ 
+        margin: "10px auto", 
+        padding: "15px",
+        background: "#f0f0f0",
+        borderRadius: "8px",
+        maxWidth: "600px"
+      }}>
+        <label style={{ display: "block", marginBottom: "8px", fontWeight: "bold" }}>
+          📱 Zoom: {zoom.toFixed(1)}x
+        </label>
+        <input 
+          type="range" 
+          min="1" 
+          max="3" 
+          step="0.1" 
+          value={zoom}
+          onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
+          style={{ width: "100%", cursor: "pointer" }}
+        />
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85em", color: "#666", marginTop: "5px" }}>
+          <button 
+            onClick={() => handleZoomChange(1)}
+            style={{ padding: "5px 15px", borderRadius: "4px", border: "1px solid #ccc", background: "#fff", cursor: "pointer" }}
+          >
+            Reset
+          </button>
+          <span>💡 Ajusta el zoom para enfocar mejor el código</span>
+        </div>
+      </div>
+      
       <video ref={videoRef} autoPlay muted playsInline style={{ width: "90%", maxWidth: 600, border: "2px solid #333" }} />
       
       {ineData ? (
