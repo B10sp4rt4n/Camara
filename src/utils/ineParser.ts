@@ -18,59 +18,51 @@ export interface INEData {
 
 export function parseINECredential(rawText: string): INEData | null {
   try {
+    console.log("=== PARSEANDO INE ===");
+    console.log("Texto completo:", rawText);
+    
     const parts = rawText.split('|');
+    console.log("Numero de partes:", parts.length);
+    console.log("Primeras 5 partes:", parts.slice(0, 5));
 
-    if (parts.length < 15) {
-      console.log('Formato no es INE. Partes:', parts.length);
+    // Credenciales INE tienen al menos 10 campos
+    if (parts.length < 10) {
+      console.log("NO ES INE - Muy pocos campos");
       return null;
     }
 
-    const curp = parts[3]?.trim() || '';
-    if (curp.length !== 18) {
+    // Validar que tenga un CURP valido (18 caracteres)
+    const curpIndex = parts.findIndex(p => p?.trim().length === 18);
+    console.log("Indice de CURP:", curpIndex);
+    
+    if (curpIndex === -1) {
+      console.log("NO ES INE - No se encontro CURP");
       return null;
     }
 
-    return {
+    console.log("SI ES INE! Parseando datos...");
+
+    const result = {
       apellidoPaterno: parts[0]?.trim() || '',
       apellidoMaterno: parts[1]?.trim() || '',
       nombres: parts[2]?.trim() || '',
-      curp: curp,
-      claveElector: parts[4]?.trim() || '',
-      fechaNacimiento: parts[5]?.trim() || '',
-      sexo: parts[6]?.trim() || '',
-      domicilio: parts[7] + ' ' + parts[8] + ' ' + parts[9],
-      seccion: parts[10]?.trim() || '',
-      municipio: parts[11]?.trim() || '',
-      estado: parts[12]?.trim() || '',
-      vigencia: parts[13]?.trim() || '',
-      emision: parts[14]?.trim() || '',
+      curp: parts[curpIndex]?.trim() || '',
+      claveElector: parts[curpIndex + 1]?.trim() || '',
+      fechaNacimiento: parts[curpIndex - 2]?.trim() || '',
+      sexo: parts[curpIndex - 1]?.trim() || '',
+      domicilio: (parts[7] || '') + ' ' + (parts[8] || '') + ' ' + (parts[9] || ''),
+      seccion: parts[curpIndex + 2]?.trim() || '',
+      municipio: parts[curpIndex + 3]?.trim() || '',
+      estado: parts[curpIndex + 4]?.trim() || '',
+      vigencia: parts[parts.length - 2]?.trim() || '',
+      emision: parts[parts.length - 1]?.trim() || '',
       raw: rawText
     };
+
+    console.log("Datos parseados:", result);
+    return result;
   } catch (error) {
     console.error('Error parsing INE:', error);
     return null;
   }
-}
-
-export function formatINEData(data: INEData): string {
-  const sexoCompleto = data.sexo === 'H' ? 'Hombre' : data.sexo === 'M' ? 'Mujer' : data.sexo;
-  
-  return 'CREDENCIAL PARA VOTAR\n\n' +
-    'NOMBRE COMPLETO:\n' +
-    data.apellidoPaterno + ' ' + data.apellidoMaterno + '\n' +
-    data.nombres + '\n\n' +
-    'IDENTIFICACION:\n' +
-    'CURP: ' + data.curp + '\n' +
-    'Clave Elector: ' + data.claveElector + '\n\n' +
-    'DATOS PERSONALES:\n' +
-    'Fecha de Nacimiento: ' + data.fechaNacimiento + '\n' +
-    'Sexo: ' + sexoCompleto + '\n\n' +
-    'UBICACION ELECTORAL:\n' +
-    'Seccion: ' + data.seccion + '\n' +
-    'Municipio: ' + data.municipio + '\n' +
-    'Estado: ' + data.estado + '\n\n' +
-    'DOMICILIO:\n' + data.domicilio + '\n\n' +
-    'VIGENCIA:\n' +
-    'Emision: ' + data.emision + '\n' +
-    'Vigencia: ' + data.vigencia;
 }
