@@ -1,4 +1,4 @@
-// Parser for Mexican INE/IFE credential (PDF417)
+﻿// Parser for Mexican INE/IFE credential (PDF417)
 export interface INEData {
   apellidoPaterno: string;
   apellidoMaterno: string;
@@ -18,11 +18,15 @@ export interface INEData {
 
 export function parseINECredential(rawText: string): INEData | null {
   try {
-    // INE PDF417 format has fields separated by pipes (|)
     const parts = rawText.split('|');
-    
+
     if (parts.length < 15) {
-      console.warn('Not enough parts in INE data', parts.length);
+      console.log('Formato no es INE. Partes:', parts.length);
+      return null;
+    }
+
+    const curp = parts[3]?.trim() || '';
+    if (curp.length !== 18) {
       return null;
     }
 
@@ -30,11 +34,11 @@ export function parseINECredential(rawText: string): INEData | null {
       apellidoPaterno: parts[0]?.trim() || '',
       apellidoMaterno: parts[1]?.trim() || '',
       nombres: parts[2]?.trim() || '',
-      curp: parts[3]?.trim() || '',
+      curp: curp,
       claveElector: parts[4]?.trim() || '',
       fechaNacimiento: parts[5]?.trim() || '',
       sexo: parts[6]?.trim() || '',
-      domicilio: `${parts[7]} ${parts[8]} ${parts[9]}`.trim(),
+      domicilio: parts[7] + ' ' + parts[8] + ' ' + parts[9],
       seccion: parts[10]?.trim() || '',
       municipio: parts[11]?.trim() || '',
       estado: parts[12]?.trim() || '',
@@ -43,36 +47,30 @@ export function parseINECredential(rawText: string): INEData | null {
       raw: rawText
     };
   } catch (error) {
-    console.error('Error parsing INE credential:', error);
+    console.error('Error parsing INE:', error);
     return null;
   }
 }
 
 export function formatINEData(data: INEData): string {
-  return `
-📋 DATOS DE CREDENCIAL INE/IFE
-
-👤 Nombre Completo:
-${data.apellidoPaterno} ${data.apellidoMaterno} ${data.nombres}
-
-🆔 Identificación:
-• CURP: ${data.curp}
-• Clave Elector: ${data.claveElector}
-
-📅 Datos Personales:
-• Fecha Nacimiento: ${data.fechaNacimiento}
-• Sexo: ${data.sexo}
-
-📍 Ubicación Electoral:
-• Sección: ${data.seccion}
-• Municipio: ${data.municipio}
-• Estado: ${data.estado}
-
-🏠 Domicilio:
-${data.domicilio}
-
-📅 Vigencia:
-• Emisión: ${data.emision}
-• Vigencia: ${data.vigencia}
-`.trim();
+  const sexoCompleto = data.sexo === 'H' ? 'Hombre' : data.sexo === 'M' ? 'Mujer' : data.sexo;
+  
+  return 'CREDENCIAL PARA VOTAR\n\n' +
+    'NOMBRE COMPLETO:\n' +
+    data.apellidoPaterno + ' ' + data.apellidoMaterno + '\n' +
+    data.nombres + '\n\n' +
+    'IDENTIFICACION:\n' +
+    'CURP: ' + data.curp + '\n' +
+    'Clave Elector: ' + data.claveElector + '\n\n' +
+    'DATOS PERSONALES:\n' +
+    'Fecha de Nacimiento: ' + data.fechaNacimiento + '\n' +
+    'Sexo: ' + sexoCompleto + '\n\n' +
+    'UBICACION ELECTORAL:\n' +
+    'Seccion: ' + data.seccion + '\n' +
+    'Municipio: ' + data.municipio + '\n' +
+    'Estado: ' + data.estado + '\n\n' +
+    'DOMICILIO:\n' + data.domicilio + '\n\n' +
+    'VIGENCIA:\n' +
+    'Emision: ' + data.emision + '\n' +
+    'Vigencia: ' + data.vigencia;
 }
