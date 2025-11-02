@@ -1,7 +1,7 @@
 ﻿import { useEffect, useRef, useState } from "react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import { AUPDebugger } from "../core/aup_debugger";
-import { parseINECredential, formatINEData, type INEData } from "../utils/ineParser";
+import { parseINECredential, type INEData } from "../utils/ineParser";
 
 export default function SimpleQRReader() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -35,9 +35,8 @@ export default function SimpleQRReader() {
           const capabilities = videoTrack.getCapabilities() as any;
           
           if (capabilities.zoom) {
-            dbg.log("Zoom disponible en este dispositivo");
+            dbg.log("Zoom disponible");
             setDebugLog((prev) => [...prev, "Zoom disponible"]);
-            
             videoTrack.applyConstraints({
               advanced: [{ zoom: zoom } as any]
             }).catch(() => {});
@@ -49,41 +48,37 @@ export default function SimpleQRReader() {
 
           if (res) {
             const text = res.getText();
-            dbg.log("Resultado detectado: " + text.substring(0, 100));
+            console.log("TEXTO DETECTADO:", text);
             
             const parsed = parseINECredential(text);
+            console.log("RESULTADO PARSE:", parsed);
+            
             if (parsed) {
-              dbg.log("Credencial INE detectada!");
-              console.log("Datos INE:", parsed);
+              console.log("ES INE! Seteando ineData...");
               setIneData(parsed);
-              setResult(formatINEData(parsed));
-              setDebugLog((prev) => [...prev, "INE leida: " + parsed.nombres + " " + parsed.apellidoPaterno]);
+              setResult(null);
+              setDebugLog((prev) => [...prev, "INE: " + parsed.nombres + " " + parsed.apellidoPaterno]);
             } else {
-              dbg.log("Codigo normal (no INE)");
+              console.log("NO es INE, es codigo normal");
               setIneData(null);
               setResult(text);
-              setDebugLog((prev) => [...prev, "Codigo leido: " + text.substring(0, 50)]);
+              setDebugLog((prev) => [...prev, "Codigo: " + text.substring(0, 40)]);
             }
           }
 
           if (err && err.name !== 'NotFoundException' && !err.message?.includes('No MultiFormat Readers')) {
-            dbg.error("Error al decodificar: " + (err.message || String(err)));
-            setDebugLog((prev) => [...prev, "Error: " + (err.message || String(err))]);
+            setDebugLog((prev) => [...prev, "Error: " + err.message]);
           }
         });
       })
       .then(() => {
-        dbg.log("Camara iniciada correctamente");
-        setDebugLog((prev) => [...prev, "Camara lista - esperando codigo..."]);
+        setDebugLog((prev) => [...prev, "Camara lista"]);
       })
       .catch((error: any) => {
-        dbg.error("Error al iniciar camara: " + (error.message || String(error)));
-        setDebugLog((prev) => [...prev, "ERROR CAMARA: " + (error.message || String(error))]);
-        setDebugLog((prev) => [...prev, "Verifica permisos de camara en el navegador"]);
+        setDebugLog((prev) => [...prev, "ERROR CAMARA: " + error.message]);
       });
 
     return () => {
-      dbg.log("Deteniendo lector...");
       active = false;
       try {
         if (typeof (reader as any).reset === 'function') {
@@ -93,15 +88,12 @@ export default function SimpleQRReader() {
           const stream = videoRef.current.srcObject as MediaStream;
           stream.getTracks().forEach(track => track.stop());
         }
-      } catch (e) {
-        // ignore
-      }
+      } catch (e) {}
     };
   }, [zoom]);
 
   const handleZoomChange = (newZoom: number) => {
     setZoom(newZoom);
-    
     if (videoRef.current?.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
       const videoTrack = stream.getVideoTracks()[0];
@@ -111,88 +103,58 @@ export default function SimpleQRReader() {
     }
   };
 
+  console.log("RENDER - ineData:", ineData);
+  console.log("RENDER - result:", result);
+
   return (
     <div style={{ textAlign: "center", padding: "10px" }}>
       <h2>Lector QR / PDF417 con soporte INE</h2>
       
-      <div style={{ 
-        margin: "10px auto", 
-        padding: "15px",
-        background: "#f0f0f0",
-        borderRadius: "8px",
-        maxWidth: "600px"
-      }}>
+      <div style={{ margin: "10px auto", padding: "15px", background: "#f0f0f0", borderRadius: "8px", maxWidth: "600px" }}>
         <label style={{ display: "block", marginBottom: "8px", fontWeight: "bold" }}>
           Zoom: {zoom.toFixed(1)}x
         </label>
-        <input 
-          type="range" 
-          min="1" 
-          max="3" 
-          step="0.1" 
-          value={zoom}
+        <input type="range" min="1" max="3" step="0.1" value={zoom}
           onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
-          style={{ width: "100%", cursor: "pointer" }}
-        />
+          style={{ width: "100%", cursor: "pointer" }} />
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85em", color: "#666", marginTop: "5px" }}>
-          <button 
-            onClick={() => handleZoomChange(1)}
-            style={{ padding: "5px 15px", borderRadius: "4px", border: "1px solid #ccc", background: "#fff", cursor: "pointer" }}
-          >
+          <button onClick={() => handleZoomChange(1)}
+            style={{ padding: "5px 15px", borderRadius: "4px", border: "1px solid #ccc", background: "#fff", cursor: "pointer" }}>
             Reset
           </button>
-          <span>Ajusta el zoom para enfocar mejor el codigo</span>
+          <span>Ajusta el zoom</span>
         </div>
       </div>
       
       <video ref={videoRef} autoPlay muted playsInline style={{ width: "90%", maxWidth: 600, border: "2px solid #333", borderRadius: "8px" }} />
       
-      {ineData ? (
-        <div style={{ 
-          background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", 
-          color: "white",
-          padding: "20px", 
-          borderRadius: "12px",
-          margin: "20px auto",
-          maxWidth: "600px",
-          textAlign: "left",
-          boxShadow: "0 4px 6px rgba(0,0,0,0.3)"
-        }}>
+      {ineData && (
+        <div style={{ background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", color: "white", padding: "20px", borderRadius: "12px", margin: "20px auto", maxWidth: "600px", textAlign: "left", boxShadow: "0 4px 6px rgba(0,0,0,0.3)" }}>
           <h3 style={{ margin: "0 0 15px 0", textAlign: "center" }}>CREDENCIAL INE</h3>
           <div style={{ background: "rgba(0,0,0,0.2)", padding: "15px", borderRadius: "8px" }}>
-            <p style={{ margin: "5px 0" }}><strong>Nombre:</strong> {ineData.nombres} {ineData.apellidoPaterno} {ineData.apellidoMaterno}</p>
-            <p style={{ margin: "5px 0" }}><strong>CURP:</strong> {ineData.curp}</p>
-            <p style={{ margin: "5px 0" }}><strong>Clave Elector:</strong> {ineData.claveElector}</p>
-            <p style={{ margin: "5px 0" }}><strong>Fecha Nacimiento:</strong> {ineData.fechaNacimiento}</p>
-            <p style={{ margin: "5px 0" }}><strong>Sexo:</strong> {ineData.sexo === 'H' ? 'Hombre' : ineData.sexo === 'M' ? 'Mujer' : ineData.sexo}</p>
-            <p style={{ margin: "5px 0" }}><strong>Seccion:</strong> {ineData.seccion}</p>
-            <p style={{ margin: "5px 0" }}><strong>Municipio:</strong> {ineData.municipio}</p>
-            <p style={{ margin: "5px 0" }}><strong>Estado:</strong> {ineData.estado}</p>
-            <p style={{ margin: "5px 0" }}><strong>Domicilio:</strong> {ineData.domicilio}</p>
-            <p style={{ margin: "5px 0" }}><strong>Vigencia:</strong> {ineData.vigencia}</p>
-            <p style={{ margin: "5px 0" }}><strong>Emision:</strong> {ineData.emision}</p>
+            <p style={{ margin: "8px 0", fontSize: "1.1em" }}><strong>Nombre:</strong><br/>{ineData.nombres} {ineData.apellidoPaterno} {ineData.apellidoMaterno}</p>
+            <p style={{ margin: "8px 0" }}><strong>CURP:</strong><br/>{ineData.curp}</p>
+            <p style={{ margin: "8px 0" }}><strong>Clave Elector:</strong><br/>{ineData.claveElector}</p>
+            <p style={{ margin: "8px 0" }}><strong>Fecha Nacimiento:</strong><br/>{ineData.fechaNacimiento}</p>
+            <p style={{ margin: "8px 0" }}><strong>Sexo:</strong><br/>{ineData.sexo === 'H' ? 'Hombre' : ineData.sexo === 'M' ? 'Mujer' : ineData.sexo}</p>
+            <p style={{ margin: "8px 0" }}><strong>Seccion:</strong><br/>{ineData.seccion}</p>
+            <p style={{ margin: "8px 0" }}><strong>Municipio:</strong><br/>{ineData.municipio}</p>
+            <p style={{ margin: "8px 0" }}><strong>Estado:</strong><br/>{ineData.estado}</p>
+            <p style={{ margin: "8px 0" }}><strong>Domicilio:</strong><br/>{ineData.domicilio}</p>
+            <p style={{ margin: "8px 0" }}><strong>Vigencia:</strong><br/>{ineData.vigencia}</p>
+            <p style={{ margin: "8px 0" }}><strong>Emision:</strong><br/>{ineData.emision}</p>
           </div>
         </div>
-      ) : result ? (
+      )}
+      
+      {!ineData && result && (
         <div style={{ background: "#e0ffe0", padding: "15px", borderRadius: "8px", margin: "20px auto", maxWidth: "600px" }}>
-          <strong>Codigo detectado:</strong> 
+          <strong>Codigo detectado:</strong>
           <pre style={{ marginTop: "10px", whiteSpace: "pre-wrap", textAlign: "left", fontSize: "0.9em" }}>{result}</pre>
         </div>
-      ) : null}
+      )}
       
-      <div style={{ 
-        textAlign: "left", 
-        marginTop: "20px", 
-        fontSize: "0.85em", 
-        padding: "10px", 
-        background: "#111", 
-        color: "#0f0", 
-        maxHeight: 300, 
-        overflowY: "scroll",
-        borderRadius: "8px",
-        maxWidth: "600px",
-        margin: "20px auto"
-      }}>
+      <div style={{ textAlign: "left", marginTop: "20px", fontSize: "0.85em", padding: "10px", background: "#111", color: "#0f0", maxHeight: 300, overflowY: "scroll", borderRadius: "8px", maxWidth: "600px", margin: "20px auto" }}>
         <strong>Debug log:</strong><br />
         {debugLog.map((log, idx) => <div key={idx}>{log}</div>)}
       </div>
