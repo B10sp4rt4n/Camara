@@ -82,7 +82,6 @@ export default function INEOCRReader() {
     
     // Configurar canvas con mejor resolución, respetando orientación
     if (orientation === 'vertical') {
-      // Rotar canvas para vertical
       canvas.width = video.videoHeight;
       canvas.height = video.videoWidth;
     } else {
@@ -91,7 +90,6 @@ export default function INEOCRReader() {
     }
     
     const ctx = canvas.getContext('2d');
-    
     if (!ctx) return;
     
     // Dibujar la imagen del video con rotación si es necesario
@@ -103,51 +101,96 @@ export default function INEOCRReader() {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     }
     
-    // Mejorar el contraste y brillo de la imagen
+    // Mejorar el contraste y brillo
     setDebugLog(prev => [...prev, "🎨 Mejorando calidad de imagen..."]);
     const imageDataObj = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageDataObj.data;
     
-    // Aumentar contraste
     const factor = 1.5;
     for (let i = 0; i < data.length; i += 4) {
-      data[i] = Math.min(255, data[i] * factor);     // R
-      data[i + 1] = Math.min(255, data[i + 1] * factor); // G
-      data[i + 2] = Math.min(255, data[i + 2] * factor); // B
+      data[i] = Math.min(255, data[i] * factor);
+      data[i + 1] = Math.min(255, data[i + 1] * factor);
+      data[i + 2] = Math.min(255, data[i + 2] * factor);
     }
     ctx.putImageData(imageDataObj, 0, 0);
     
     const imageData = canvas.toDataURL('image/png', 1.0);
-    setCapturedImage(imageData); // Guardar imagen para mostrar
+    setCapturedImage(imageData);
     
-    setDebugLog(prev => [...prev, "🔍 Procesando con OCR (esto puede tardar)..."]);
+    setDebugLog(prev => [...prev, "🔍 Procesando regiones específicas del INE..."]);
 
     try {
-      const result = await Tesseract.recognize(imageData, 'spa', {
+      // Procesar por regiones específicas del INE
+      // Región superior izquierda: APELLIDO PATERNO (aprox 15-30% altura, 5-50% ancho)
+      const apellidoCanvas = document.createElement('canvas');
+      apellidoCanvas.width = canvas.width * 0.45;
+      apellidoCanvas.height = canvas.height * 0.15;
+      const apellidoCtx = apellidoCanvas.getContext('2d');
+      if (apellidoCtx) {
+        apellidoCtx.drawImage(
+          canvas,
+          canvas.width * 0.05, canvas.height * 0.15, // source x, y
+          canvas.width * 0.45, canvas.height * 0.15, // source width, height
+          0, 0, // dest x, y
+          apellidoCanvas.width, apellidoCanvas.height // dest width, height
+        );
+      }
+      
+      // Región para NOMBRE (aprox 30-45% altura, 5-50% ancho)
+      const nombreCanvas = document.createElement('canvas');
+      nombreCanvas.width = canvas.width * 0.45;
+      nombreCanvas.height = canvas.height * 0.15;
+      const nombreCtx = nombreCanvas.getContext('2d');
+      if (nombreCtx) {
+        nombreCtx.drawImage(
+          canvas,
+          canvas.width * 0.05, canvas.height * 0.30,
+          canvas.width * 0.45, canvas.height * 0.15,
+          0, 0,
+          nombreCanvas.width, nombreCanvas.height
+        );
+      }
+
+      setDebugLog(prev => [...prev, "📖 Leyendo APELLIDO PATERNO..."]);
+      const apellidoResult = await Tesseract.recognize(apellidoCanvas.toDataURL(), 'spa', {
         logger: (m) => {
           if (m.status === 'recognizing text') {
             const progress = Math.round(m.progress * 100);
-            if (progress % 20 === 0) { // Mostrar cada 20%
-              setDebugLog(prev => [...prev, `⏳ OCR progreso: ${progress}%`]);
+            if (progress % 25 === 0) {
+              setDebugLog(prev => [...prev, `⏳ Apellido: ${progress}%`]);
             }
           }
         }
       });
 
-      const text = result.data.text;
-      setDebugLog(prev => [...prev, "📝 Texto detectado (" + text.length + " caracteres)"]);
-      setDebugLog(prev => [...prev, "🔎 Analizando datos..."]);
-      console.log("========== TEXTO COMPLETO OCR ==========");
-      console.log(text);
+      setDebugLog(prev => [...prev, "� Leyendo NOMBRE(S)..."]);
+      const nombreResult = await Tesseract.recognize(nombreCanvas.toDataURL(), 'spa', {
+        logger: (m) => {
+          if (m.status === 'recognizing text') {
+            const progress = Math.round(m.progress * 100);
+            if (progress % 25 === 0) {
+              setDebugLog(prev => [...prev, `⏳ Nombre: ${progress}%`]);
+            }
+          }
+        }
+      });
+
+      const apellidoText = apellidoResult.data.text.trim();
+      const nombreText = nombreResult.data.text.trim();
+
+      console.log("========== TEXTO POR REGIONES ==========");
+      console.log("Apellido detectado:", apellidoText);
+      console.log("Nombre detectado:", nombreText);
       console.log("========================================");
 
-      const parsed = parseINEFromOCR(text);
+      const parsed = parseINEFromRegions(apellidoText, nombreText);
+      
       if (parsed && (parsed.apellidoPaterno || parsed.nombre)) {
         setIneData(parsed);
-        setDebugLog(prev => [...prev, "✅ INE válida: " + parsed.apellidoPaterno + " " + parsed.nombre]);
+        setDebugLog(prev => [...prev, "✅ INE procesada: " + parsed.apellidoPaterno + " " + parsed.nombre]);
         setFlowStep('validated');
       } else {
-        setDebugLog(prev => [...prev, "❌ No se detectó nombre. Intenta con mejor iluminación."]);
+        setDebugLog(prev => [...prev, "❌ No se detectaron datos válidos. Intenta con mejor luz/enfoque."]);
       }
     } catch (error: any) {
       setDebugLog(prev => [...prev, "❌ ERROR OCR: " + error.message]);
@@ -156,7 +199,58 @@ export default function INEOCRReader() {
     setIsProcessing(false);
   };
 
-  const parseINEFromOCR = (text: string): INEDataOCR | null => {
+    // Parsear por regiones específicas (estructura conocida del INE)
+  const parseINEFromRegions = (apellidoRaw: string, nombreRaw: string): INEDataOCR => {
+    console.log("🔍 Parseando por regiones:");
+    console.log("  Región APELLIDO:", apellidoRaw);
+    console.log("  Región NOMBRE:", nombreRaw);
+
+    // Limpiar texto: quitar palabras clave del INE y normalizar
+    const cleanText = (text: string): string => {
+      return text
+        .toUpperCase()
+        .replace(/APELLIDO\s*(PATERNO)?/gi, '')
+        .replace(/NOMBRE\s*(S)?/gi, '')
+        .replace(/INSTITUTO\s*NACIONAL\s*ELECTORAL/gi, '')
+        .replace(/CREDENCIAL\s*PARA\s*VOTAR/gi, '')
+        .replace(/DOMICILIO/gi, '')
+        .replace(/IDENTIFICACIÓN/gi, '')
+        .replace(/[<>]/g, '') // Quitar símbolos
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 2) // Líneas con al menos 3 caracteres
+        .join(' ')
+        .trim();
+    };
+
+    const apellidoLimpio = cleanText(apellidoRaw);
+    const nombreLimpio = cleanText(nombreRaw);
+
+    // Extraer palabras significativas (solo letras y espacios)
+    const extractWords = (text: string): string => {
+      const words = text
+        .replace(/[^A-ZÁÉÍÓÚÑ\s]/g, '')
+        .split(/\s+/)
+        .filter(word => word.length >= 2 && !/^[0-9]+$/.test(word));
+      
+      return words.join(' ').trim();
+    };
+
+    const apellidoFinal = extractWords(apellidoLimpio);
+    const nombreFinal = extractWords(nombreLimpio);
+
+    console.log("✅ Resultado parseado:");
+    console.log("  Apellido Paterno:", apellidoFinal || "(vacío)");
+    console.log("  Nombre:", nombreFinal || "(vacío)");
+
+    return {
+      apellidoPaterno: apellidoFinal || "No detectado",
+      nombre: nombreFinal || "No detectado",
+      rawText: `APELLIDO: ${apellidoRaw}\n\nNOMBRE: ${nombreRaw}`
+    };
+  };
+
+  const parseINEFromOCR = (text: string): INEDataOCR => {
     try {
       console.log("========== INICIANDO PARSEO ==========");
       console.log("Texto original:", text);
@@ -290,9 +384,25 @@ export default function INEOCRReader() {
       {/* PASO 1: CAPTURA DE CREDENCIAL */}
       {flowStep === 'capture' && (
         <>
-          <p style={{ fontSize: "0.9em", color: "white" }}>
-            Coloca la parte FRONTAL de la credencial INE frente a la cámara
-          </p>
+          <div style={{
+            background: "#e3f2fd",
+            padding: "15px",
+            borderRadius: "8px",
+            margin: "20px auto",
+            maxWidth: "600px",
+            color: "#1565c0",
+            fontSize: "0.9em",
+            lineHeight: "1.6"
+          }}>
+            <strong>📋 Instrucciones:</strong>
+            <ul style={{ margin: "10px 0 0 0", paddingLeft: "20px", textAlign: "left" }}>
+              <li>Coloca la INE en <strong>posición horizontal</strong></li>
+              <li>La cámara debe ver la <strong>parte FRONTAL</strong> completa</li>
+              <li>Centra las zonas de <strong>APELLIDO y NOMBRE</strong> (verás guías amarillas/verdes)</li>
+              <li>Usa buena iluminación sin reflejos</li>
+              <li>Mantén la cámara estable al capturar</li>
+            </ul>
+          </div>
 
           {/* Controles de orientación */}
           <div style={{ 
@@ -331,15 +441,75 @@ export default function INEOCRReader() {
             </button>
           </div>
 
-          <video ref={videoRef} autoPlay muted playsInline 
-            style={{ 
-              width: "90%", 
-              maxWidth: 600, 
-              border: "2px solid #333", 
-              borderRadius: "8px", 
-              marginBottom: "15px",
-              transform: orientation === 'vertical' ? 'rotate(90deg)' : 'none'
-            }} />
+          {/* Vista de cámara con guías de región */}
+          <div style={{ position: "relative", display: "inline-block", margin: "0 auto" }}>
+            <video ref={videoRef} autoPlay muted playsInline 
+              style={{ 
+                width: "90%", 
+                maxWidth: 600, 
+                border: "2px solid #333", 
+                borderRadius: "8px", 
+                marginBottom: "15px",
+                transform: orientation === 'vertical' ? 'rotate(90deg)' : 'none',
+                display: "block"
+              }} />
+
+            {/* Guías superpuestas - APELLIDO PATERNO */}
+            <div style={{
+              position: "absolute",
+              top: "15%",
+              left: "5%",
+              width: "45%",
+              height: "15%",
+              border: "3px dashed rgba(255, 215, 0, 0.9)",
+              background: "rgba(255, 215, 0, 0.15)",
+              pointerEvents: "none",
+              borderRadius: "4px"
+            }}>
+              <div style={{
+                position: "absolute",
+                top: "-28px",
+                left: "0",
+                background: "rgba(255, 215, 0, 0.95)",
+                color: "#000",
+                padding: "4px 10px",
+                borderRadius: "4px",
+                fontSize: "0.75em",
+                fontWeight: "bold",
+                boxShadow: "0 2px 4px rgba(0,0,0,0.3)"
+              }}>
+                APELLIDO PATERNO
+              </div>
+            </div>
+
+            {/* Guías superpuestas - NOMBRE */}
+            <div style={{
+              position: "absolute",
+              top: "30%",
+              left: "5%",
+              width: "45%",
+              height: "15%",
+              border: "3px dashed rgba(0, 255, 127, 0.9)",
+              background: "rgba(0, 255, 127, 0.15)",
+              pointerEvents: "none",
+              borderRadius: "4px"
+            }}>
+              <div style={{
+                position: "absolute",
+                top: "-28px",
+                left: "0",
+                background: "rgba(0, 255, 127, 0.95)",
+                color: "#000",
+                padding: "4px 10px",
+                borderRadius: "4px",
+                fontSize: "0.75em",
+                fontWeight: "bold",
+                boxShadow: "0 2px 4px rgba(0,0,0,0.3)"
+              }}>
+                NOMBRE(S)
+              </div>
+            </div>
+          </div>
 
           <canvas ref={canvasRef} style={{ display: "none" }} />
 
