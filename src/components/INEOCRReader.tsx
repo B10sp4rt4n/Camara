@@ -18,23 +18,40 @@ export default function INEOCRReader() {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [flowStep, setFlowStep] = useState<FlowStep>('capture');
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('horizontal');
 
   useEffect(() => {
     if (flowStep === 'capture') {
       const constraints = {
         video: {
           facingMode: "environment",
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
+          width: { ideal: orientation === 'horizontal' ? 1920 : 1080 },
+          height: { ideal: orientation === 'horizontal' ? 1080 : 1920 }
         }
       };
 
       navigator.mediaDevices.getUserMedia(constraints)
-        .then(mediaStream => {
+        .then(async (mediaStream) => {
           if (videoRef.current) {
             videoRef.current.srcObject = mediaStream;
             setStream(mediaStream);
-            setDebugLog(prev => [...prev, "Camara iniciada"]);
+            
+            // Aplicar zoom si está disponible
+            try {
+              const track = mediaStream.getVideoTracks()[0];
+              const capabilities: any = track.getCapabilities();
+              
+              if (capabilities.zoom) {
+                await track.applyConstraints({
+                  advanced: [{ zoom: zoomLevel } as any]
+                });
+              }
+            } catch (error) {
+              console.log("Zoom no soportado en este dispositivo");
+            }
+            
+            setDebugLog(prev => [...prev, "📷 Cámara iniciada (zoom: " + zoomLevel + "x)"]);
           }
         })
         .catch(error => {
@@ -52,7 +69,7 @@ export default function INEOCRReader() {
         stream.getTracks().forEach(track => track.stop());
       }
     };
-  }, [flowStep]);
+  }, [flowStep, zoomLevel, orientation]);
 
   const captureAndProcess = async () => {
     if (!videoRef.current || !canvasRef.current) return;
@@ -63,15 +80,28 @@ export default function INEOCRReader() {
     const canvas = canvasRef.current;
     const video = videoRef.current;
     
-    // Configurar canvas con mejor resolución
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    // Configurar canvas con mejor resolución, respetando orientación
+    if (orientation === 'vertical') {
+      // Rotar canvas para vertical
+      canvas.width = video.videoHeight;
+      canvas.height = video.videoWidth;
+    } else {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+    }
+    
     const ctx = canvas.getContext('2d');
     
     if (!ctx) return;
     
-    // Dibujar la imagen del video
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // Dibujar la imagen del video con rotación si es necesario
+    if (orientation === 'vertical') {
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate(90 * Math.PI / 180);
+      ctx.drawImage(video, -video.videoWidth / 2, -video.videoHeight / 2, video.videoWidth, video.videoHeight);
+    } else {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    }
     
     // Mejorar el contraste y brillo de la imagen
     setDebugLog(prev => [...prev, "🎨 Mejorando calidad de imagen..."]);
@@ -264,10 +294,109 @@ export default function INEOCRReader() {
             Coloca la parte FRONTAL de la credencial INE frente a la cámara
           </p>
 
+          {/* Controles de orientación */}
+          <div style={{ 
+            display: "flex", 
+            gap: "10px", 
+            justifyContent: "center", 
+            marginBottom: "15px" 
+          }}>
+            <button
+              onClick={() => setOrientation('horizontal')}
+              style={{
+                padding: "8px 15px",
+                fontSize: "0.9em",
+                borderRadius: "6px",
+                border: "2px solid white",
+                background: orientation === 'horizontal' ? "white" : "transparent",
+                color: orientation === 'horizontal' ? "#667eea" : "white",
+                cursor: "pointer",
+                fontWeight: "bold"
+              }}>
+              📱 Horizontal
+            </button>
+            <button
+              onClick={() => setOrientation('vertical')}
+              style={{
+                padding: "8px 15px",
+                fontSize: "0.9em",
+                borderRadius: "6px",
+                border: "2px solid white",
+                background: orientation === 'vertical' ? "white" : "transparent",
+                color: orientation === 'vertical' ? "#667eea" : "white",
+                cursor: "pointer",
+                fontWeight: "bold"
+              }}>
+              📱 Vertical
+            </button>
+          </div>
+
           <video ref={videoRef} autoPlay muted playsInline 
-            style={{ width: "90%", maxWidth: 600, border: "2px solid #333", borderRadius: "8px", marginBottom: "15px" }} />
+            style={{ 
+              width: "90%", 
+              maxWidth: 600, 
+              border: "2px solid #333", 
+              borderRadius: "8px", 
+              marginBottom: "15px",
+              transform: orientation === 'vertical' ? 'rotate(90deg)' : 'none'
+            }} />
 
           <canvas ref={canvasRef} style={{ display: "none" }} />
+
+          {/* Controles de Zoom */}
+          <div style={{ 
+            display: "flex", 
+            alignItems: "center", 
+            justifyContent: "center", 
+            gap: "15px", 
+            marginBottom: "15px",
+            background: "rgba(255,255,255,0.2)",
+            padding: "15px",
+            borderRadius: "10px",
+            maxWidth: "500px",
+            margin: "0 auto 15px auto"
+          }}>
+            <span style={{ color: "white", fontWeight: "bold", fontSize: "0.9em" }}>🔍 Zoom:</span>
+            <button
+              onClick={() => setZoomLevel(Math.max(1, zoomLevel - 0.5))}
+              disabled={zoomLevel <= 1}
+              style={{
+                padding: "8px 15px",
+                fontSize: "1.2em",
+                borderRadius: "6px",
+                border: "none",
+                background: zoomLevel <= 1 ? "#555" : "white",
+                color: zoomLevel <= 1 ? "#999" : "#667eea",
+                cursor: zoomLevel <= 1 ? "not-allowed" : "pointer",
+                fontWeight: "bold"
+              }}>
+              -
+            </button>
+            <span style={{ 
+              color: "white", 
+              fontWeight: "bold", 
+              fontSize: "1.1em",
+              minWidth: "50px",
+              textAlign: "center"
+            }}>
+              {zoomLevel.toFixed(1)}x
+            </span>
+            <button
+              onClick={() => setZoomLevel(Math.min(5, zoomLevel + 0.5))}
+              disabled={zoomLevel >= 5}
+              style={{
+                padding: "8px 15px",
+                fontSize: "1.2em",
+                borderRadius: "6px",
+                border: "none",
+                background: zoomLevel >= 5 ? "#555" : "white",
+                color: zoomLevel >= 5 ? "#999" : "#667eea",
+                cursor: zoomLevel >= 5 ? "not-allowed" : "pointer",
+                fontWeight: "bold"
+              }}>
+              +
+            </button>
+          </div>
 
           <button onClick={captureAndProcess} disabled={isProcessing}
             style={{ 
