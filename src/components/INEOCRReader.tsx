@@ -1,16 +1,13 @@
-﻿import { useEffect, useRef, useState } from "react";
+﻿import React, { useEffect, useRef, useState } from "react";
 import Tesseract from 'tesseract.js';
 
 interface INEDataOCR {
   nombre: string;
   apellidoPaterno: string;
-  claveElector: string;
-  ocr: string;
-  numeroEmisionVertical: string;
   rawText: string;
 }
 
-type FlowStep = 'capture' | 'ine-validation' | 'validated';
+type FlowStep = 'capture' | 'validated';
 
 export default function INEOCRReader() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -20,8 +17,6 @@ export default function INEOCRReader() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [flowStep, setFlowStep] = useState<FlowStep>('capture');
-  const [captchaImageUrl, setCaptchaImageUrl] = useState('');
-  const [userCaptchaInput, setUserCaptchaInput] = useState('');
 
   useEffect(() => {
     if (flowStep === 'capture') {
@@ -45,6 +40,7 @@ export default function INEOCRReader() {
           setDebugLog(prev => [...prev, "ERROR CAMARA: " + error.message]);
         });
     } else {
+      // Detener cámara cuando no estamos en paso de captura
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
@@ -78,7 +74,7 @@ export default function INEOCRReader() {
 
     try {
       const result = await Tesseract.recognize(imageData, 'spa', {
-        logger: (m: any) => {
+        logger: (m) => {
           if (m.status === 'recognizing text') {
             setDebugLog(prev => [...prev, 'OCR progreso: ' + Math.round(m.progress * 100) + '%']);
           }
@@ -90,13 +86,13 @@ export default function INEOCRReader() {
       console.log("TEXTO OCR:", text);
 
       const parsed = parseINEFromOCR(text);
-      if (parsed) {
+      if (parsed && (parsed.apellidoPaterno || parsed.nombre)) {
         setIneData(parsed);
-        setDebugLog(prev => [...prev, "INE detectada: " + parsed.apellidoPaterno + " " + parsed.nombre]);
-        setFlowStep('ine-validation');
-        loadINECaptcha(parsed);
+        setDebugLog(prev => [...prev, "✅ INE válida: " + parsed.apellidoPaterno + " " + parsed.nombre]);
+        // Cambiar directamente a validado
+        setFlowStep('validated');
       } else {
-        setDebugLog(prev => [...prev, "No se pudo parsear INE del texto"]);
+        setDebugLog(prev => [...prev, "❌ No se pudo detectar nombre en la credencial. Intenta de nuevo."]);
       }
     } catch (error: any) {
       setDebugLog(prev => [...prev, "ERROR OCR: " + error.message]);
@@ -109,56 +105,49 @@ export default function INEOCRReader() {
     try {
       console.log("Parseando texto OCR:", text);
       
+      // Extraer nombre y apellido paterno
       const lines = text.split('\n').filter(l => l.trim().length > 2);
       let apellidoPaterno = '';
       let nombre = '';
-      let claveElector = '';
-      let ocr = '';
-      let numeroEmisionVertical = '';
       
+      // Buscar patrones comunes en credenciales INE
       for (let i = 0; i < Math.min(lines.length, 15); i++) {
-        const line = lines[i].trim();
+        const line = lines[i].trim().toUpperCase();
         
-        if (line.match(/^[A-ZÁÉÍÓÚÑ\s]{3,}$/)) {
-          if (!apellidoPaterno) {
+        // Buscar líneas con solo letras mayúsculas (nombres en INE)
+        if (line.match(/^[A-ZÁÉÍÓÚÑ\s]{3,50}$/)) {
+          if (!apellidoPaterno && line.length > 3) {
             apellidoPaterno = line;
             console.log("Apellido Paterno detectado:", line);
-          } else if (!nombre) {
+          } else if (!nombre && line.length > 2 && apellidoPaterno) {
             nombre = line;
             console.log("Nombre detectado:", line);
+            break;
           }
         }
-        
-        const claveMatch = line.match(/[A-Z]{6}\d{8}[HM]\d{3}/);
-        if (claveMatch) {
-          claveElector = claveMatch[0];
-          console.log("Clave Elector detectada:", claveElector);
+      }
+
+      // Si no se encontró por el método anterior, buscar palabras clave
+      if (!apellidoPaterno || !nombre) {
+        const upperText = text.toUpperCase();
+        const nameMatch = upperText.match(/APELLIDOS?\s*([A-ZÁÉÍÓÚÑ\s]+)\s+NOMBRE/);
+        if (nameMatch) {
+          apellidoPaterno = nameMatch[1].trim();
         }
-        
-        const ocrMatch = line.match(/\d{13}/);
-        if (ocrMatch && !ocr) {
-          ocr = ocrMatch[0];
-          console.log("OCR detectado:", ocr);
-        }
-        
-        const emisionMatch = line.match(/\d{9}/);
-        if (emisionMatch && emisionMatch[0] !== ocr && !numeroEmisionVertical) {
-          numeroEmisionVertical = emisionMatch[0];
-          console.log("Num Emisión detectado:", numeroEmisionVertical);
+        const firstNameMatch = upperText.match(/NOMBRE[S]?\s*([A-ZÁÉÍÓÚÑ\s]+)/);
+        if (firstNameMatch) {
+          nombre = firstNameMatch[1].trim().split(/\s+/).slice(0, 3).join(' ');
         }
       }
 
       if (!apellidoPaterno && !nombre) {
-        console.log("No se encontro nombre ni apellido");
+        console.log("No se encontró nombre ni apellido en el texto OCR");
         return null;
       }
 
       return {
-        apellidoPaterno,
-        nombre,
-        claveElector,
-        ocr,
-        numeroEmisionVertical,
+        apellidoPaterno: apellidoPaterno || 'NO DETECTADO',
+        nombre: nombre || 'NO DETECTADO',
         rawText: text
       };
     } catch (error) {
@@ -167,93 +156,28 @@ export default function INEOCRReader() {
     }
   };
 
-  const loadINECaptcha = async (data: INEDataOCR) => {
-    setDebugLog(prev => [...prev, "Cargando CAPTCHA del INE..."]);
-    
-    try {
-      const ineUrl = 'https://listanominal.ine.mx/scpln/';
-      const captchaResponse = await fetch(ineUrl + 'captcha', {
-        method: 'GET',
-        mode: 'cors'
-      });
-      
-      if (captchaResponse.ok) {
-        const blob = await captchaResponse.blob();
-        const imageUrl = URL.createObjectURL(blob);
-        setCaptchaImageUrl(imageUrl);
-        setDebugLog(prev => [...prev, "CAPTCHA del INE cargado"]);
-      } else {
-        setDebugLog(prev => [...prev, "Error al cargar CAPTCHA: " + captchaResponse.status]);
-        setCaptchaImageUrl('');
-      }
-    } catch (error: any) {
-      setDebugLog(prev => [...prev, "Error de red al cargar CAPTCHA: " + error.message]);
-      setCaptchaImageUrl('');
-    }
-  };
-
-  const validateWithINE = async () => {
-    if (!ineData) return;
-    
-    setIsProcessing(true);
-    setDebugLog(prev => [...prev, "Validando con sistema INE..."]);
-    
-    try {
-      const formData = new FormData();
-      formData.append('claveElector', ineData.claveElector);
-      formData.append('ocr', ineData.ocr);
-      formData.append('numeroEmisionVertical', ineData.numeroEmisionVertical);
-      formData.append('captcha', userCaptchaInput);
-      
-      const response = await fetch('https://listanominal.ine.mx/scpln/', {
-        method: 'POST',
-        body: formData,
-        mode: 'cors'
-      });
-      
-      if (response.ok) {
-        const html = await response.text();
-        if (html.includes('VIGENTE') || html.includes('vigente')) {
-          setDebugLog(prev => [...prev, " Credencial VIGENTE validada por INE"]);
-          setFlowStep('validated');
-        } else if (html.includes('NO VIGENTE')) {
-          setDebugLog(prev => [...prev, " Credencial NO VIGENTE según INE"]);
-        } else {
-          setDebugLog(prev => [...prev, " CAPTCHA incorrecto, intenta de nuevo"]);
-          setUserCaptchaInput('');
-          loadINECaptcha(ineData);
-        }
-      }
-    } catch (error: any) {
-      setDebugLog(prev => [...prev, "Error al validar: " + error.message]);
-    }
-    
-    setIsProcessing(false);
-  };
-
   const resetReader = () => {
     setIneData(null);
     setFlowStep('capture');
-    setUserCaptchaInput('');
-    setCaptchaImageUrl('');
-    setDebugLog(prev => [...prev, "Reiniciando..."]);
+    setDebugLog((prev) => [...prev, "Reiniciando..."]);
   };
 
   return (
     <div style={{ textAlign: "center", padding: "10px" }}>
       <h2>Validación de Acceso con INE</h2>
-      
+
+      {/* PASO 1: CAPTURA DE CREDENCIAL */}
       {flowStep === 'capture' && (
         <>
           <p style={{ fontSize: "0.9em", color: "#666" }}>
             Coloca la parte FRONTAL de la credencial INE frente a la cámara
           </p>
-          
+
           <video ref={videoRef} autoPlay muted playsInline 
             style={{ width: "90%", maxWidth: 600, border: "2px solid #333", borderRadius: "8px", marginBottom: "15px" }} />
-          
+
           <canvas ref={canvasRef} style={{ display: "none" }} />
-          
+
           <button onClick={captureAndProcess} disabled={isProcessing}
             style={{ 
               padding: "15px 40px", 
@@ -271,118 +195,7 @@ export default function INEOCRReader() {
         </>
       )}
 
-      {flowStep === 'ine-validation' && ineData && (
-        <div style={{ maxWidth: 500, margin: "0 auto" }}>
-          <div style={{ 
-            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", 
-            color: "white", 
-            padding: "20px", 
-            borderRadius: "12px", 
-            marginBottom: "20px",
-            boxShadow: "0 4px 6px rgba(0,0,0,0.3)" 
-          }}>
-            <h3 style={{ margin: "0 0 15px 0" }}>Datos Capturados</h3>
-            <div style={{ background: "rgba(0,0,0,0.2)", padding: "15px", borderRadius: "8px", textAlign: "left" }}>
-              <p style={{ margin: "8px 0" }}><strong>Apellido Paterno:</strong><br/>{ineData.apellidoPaterno}</p>
-              <p style={{ margin: "8px 0" }}><strong>Nombre(s):</strong><br/>{ineData.nombre}</p>
-              {ineData.claveElector && <p style={{ margin: "8px 0", fontSize: "0.85em" }}><strong>Clave Elector:</strong> {ineData.claveElector}</p>}
-            </div>
-          </div>
-
-          <div style={{ 
-            background: "#fff", 
-            padding: "30px", 
-            borderRadius: "12px", 
-            boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
-            border: "2px solid #667eea"
-          }}>
-            <h3 style={{ margin: "0 0 20px 0", color: "#333" }}>Validación con Sistema INE</h3>
-            
-            {captchaImageUrl ? (
-              <>
-                <p style={{ fontSize: "0.9em", color: "#666", marginBottom: "15px" }}>
-                  Ingresa el código CAPTCHA del sistema INE:
-                </p>
-                
-                <img src={captchaImageUrl} alt="CAPTCHA INE" 
-                  style={{ 
-                    border: "2px solid #ddd", 
-                    borderRadius: "8px", 
-                    marginBottom: "15px",
-                    maxWidth: "100%"
-                  }} />
-              </>
-            ) : (
-              <p style={{ fontSize: "0.9em", color: "#999", marginBottom: "15px" }}>
-                 No se pudo cargar CAPTCHA del INE. Validación manual.
-              </p>
-            )}
-            
-            <input 
-              type="text" 
-              value={userCaptchaInput}
-              onChange={(e) => setUserCaptchaInput(e.target.value)}
-              placeholder="Ingresa el código CAPTCHA"
-              style={{ 
-                width: "100%", 
-                padding: "12px", 
-                fontSize: "1.2em", 
-                borderRadius: "8px", 
-                border: "2px solid #ddd",
-                textAlign: "center",
-                marginBottom: "15px",
-                boxSizing: "border-box"
-              }}
-            />
-            
-            <div style={{ display: "flex", gap: "10px" }}>
-              <button onClick={validateWithINE} disabled={isProcessing || !userCaptchaInput}
-                style={{ 
-                  flex: 1,
-                  padding: "12px 25px", 
-                  fontSize: "1em", 
-                  borderRadius: "8px", 
-                  border: "none", 
-                  background: (isProcessing || !userCaptchaInput) ? "#ccc" : "#667eea", 
-                  color: "white", 
-                  cursor: (isProcessing || !userCaptchaInput) ? "not-allowed" : "pointer", 
-                  fontWeight: "bold"
-                }}>
-                {isProcessing ? "Validando..." : "Validar con INE"}
-              </button>
-              
-              <button onClick={() => loadINECaptcha(ineData)}
-                style={{ 
-                  padding: "12px 25px", 
-                  fontSize: "1em", 
-                  borderRadius: "8px", 
-                  border: "2px solid #667eea", 
-                  background: "transparent", 
-                  color: "#667eea", 
-                  cursor: "pointer", 
-                  fontWeight: "bold"
-                }}>
-                
-              </button>
-              
-              <button onClick={resetReader}
-                style={{ 
-                  padding: "12px 25px", 
-                  fontSize: "1em", 
-                  borderRadius: "8px", 
-                  border: "2px solid #999", 
-                  background: "transparent", 
-                  color: "#999", 
-                  cursor: "pointer", 
-                  fontWeight: "bold"
-                }}>
-                
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* PASO 2: ACCESO VALIDADO */}
       {flowStep === 'validated' && ineData && (
         <div style={{ maxWidth: 500, margin: "0 auto" }}>
           <div style={{ 
@@ -392,12 +205,12 @@ export default function INEOCRReader() {
             borderRadius: "12px", 
             boxShadow: "0 4px 6px rgba(0,0,0,0.3)" 
           }}>
-            <div style={{ fontSize: "4em", marginBottom: "15px" }}></div>
-            <h2 style={{ margin: "0 0 20px 0" }}>Credencial Vigente</h2>
+            <div style={{ fontSize: "4em", marginBottom: "15px" }}>✅</div>
+            <h2 style={{ margin: "0 0 20px 0" }}>INE Válida</h2>
             <p style={{ fontSize: "0.9em", opacity: 0.9, marginBottom: "20px" }}>
-              Validado por sistema oficial del INE
+              Datos capturados correctamente
             </p>
-            
+
             <div style={{ background: "rgba(0,0,0,0.2)", padding: "20px", borderRadius: "8px", textAlign: "left" }}>
               <p style={{ margin: "8px 0", fontSize: "1.1em" }}>
                 <strong>Apellido Paterno:</strong><br/>{ineData.apellidoPaterno}
@@ -409,7 +222,7 @@ export default function INEOCRReader() {
                 Validado: {new Date().toLocaleString('es-MX')}
               </p>
             </div>
-            
+
             <button onClick={resetReader}
               style={{ 
                 padding: "12px 40px", 
@@ -428,7 +241,7 @@ export default function INEOCRReader() {
           </div>
         </div>
       )}
-      
+
       <div style={{ 
         textAlign: "left", 
         marginTop: "20px", 
