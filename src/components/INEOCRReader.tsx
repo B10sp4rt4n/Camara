@@ -17,6 +17,7 @@ export default function INEOCRReader() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [flowStep, setFlowStep] = useState<FlowStep>('capture');
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
 
   useEffect(() => {
     if (flowStep === 'capture') {
@@ -57,45 +58,69 @@ export default function INEOCRReader() {
     if (!videoRef.current || !canvasRef.current) return;
 
     setIsProcessing(true);
-    setDebugLog(prev => [...prev, "Capturando imagen..."]);
+    setDebugLog(prev => [...prev, "📸 Capturando imagen..."]);
 
     const canvas = canvasRef.current;
     const video = videoRef.current;
+    
+    // Configurar canvas con mejor resolución
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     
     if (!ctx) return;
     
-    ctx.drawImage(video, 0, 0);
-    const imageData = canvas.toDataURL('image/png');
+    // Dibujar la imagen del video
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     
-    setDebugLog(prev => [...prev, "Procesando con OCR..."]);
+    // Mejorar el contraste y brillo de la imagen
+    setDebugLog(prev => [...prev, "🎨 Mejorando calidad de imagen..."]);
+    const imageDataObj = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageDataObj.data;
+    
+    // Aumentar contraste
+    const factor = 1.5;
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = Math.min(255, data[i] * factor);     // R
+      data[i + 1] = Math.min(255, data[i + 1] * factor); // G
+      data[i + 2] = Math.min(255, data[i + 2] * factor); // B
+    }
+    ctx.putImageData(imageDataObj, 0, 0);
+    
+    const imageData = canvas.toDataURL('image/png', 1.0);
+    setCapturedImage(imageData); // Guardar imagen para mostrar
+    
+    setDebugLog(prev => [...prev, "🔍 Procesando con OCR (esto puede tardar)..."]);
 
     try {
       const result = await Tesseract.recognize(imageData, 'spa', {
         logger: (m) => {
           if (m.status === 'recognizing text') {
-            setDebugLog(prev => [...prev, 'OCR progreso: ' + Math.round(m.progress * 100) + '%']);
+            const progress = Math.round(m.progress * 100);
+            if (progress % 20 === 0) { // Mostrar cada 20%
+              setDebugLog(prev => [...prev, `⏳ OCR progreso: ${progress}%`]);
+            }
           }
         }
       });
 
       const text = result.data.text;
-      setDebugLog(prev => [...prev, "Texto detectado, parseando..."]);
-      console.log("TEXTO OCR:", text);
+      setDebugLog(prev => [...prev, "📝 Texto detectado (" + text.length + " caracteres)"]);
+      setDebugLog(prev => [...prev, "🔎 Analizando datos..."]);
+      console.log("========== TEXTO COMPLETO OCR ==========");
+      console.log(text);
+      console.log("========================================");
 
       const parsed = parseINEFromOCR(text);
       if (parsed && (parsed.apellidoPaterno || parsed.nombre)) {
         setIneData(parsed);
         setDebugLog(prev => [...prev, "✅ INE válida: " + parsed.apellidoPaterno + " " + parsed.nombre]);
-        // Cambiar directamente a validado
         setFlowStep('validated');
       } else {
-        setDebugLog(prev => [...prev, "❌ No se pudo detectar nombre en la credencial. Intenta de nuevo."]);
+        setDebugLog(prev => [...prev, "❌ No se detectó nombre. Intenta con mejor iluminación."]);
       }
     } catch (error: any) {
-      setDebugLog(prev => [...prev, "ERROR OCR: " + error.message]);
+      setDebugLog(prev => [...prev, "❌ ERROR OCR: " + error.message]);
     }
 
     setIsProcessing(false);
@@ -103,90 +128,102 @@ export default function INEOCRReader() {
 
   const parseINEFromOCR = (text: string): INEDataOCR | null => {
     try {
-      console.log("========== TEXTO COMPLETO OCR ==========");
-      console.log(text);
-      console.log("========================================");
+      console.log("========== INICIANDO PARSEO ==========");
+      console.log("Texto original:", text);
       
-      // Limpiar y normalizar el texto
-      const cleanText = text
-        .replace(/[^\w\sÁÉÍÓÚÑáéíóúñ]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .toUpperCase()
-        .trim();
-      
-      console.log("Texto limpio:", cleanText);
-      
-      // Dividir en líneas y filtrar vacías
-      const lines = text.split('\n')
-        .map(l => l.trim())
-        .filter(l => l.length > 0);
-      
-      console.log("Líneas detectadas:", lines);
+      // Dividir en líneas preservando espacios
+      const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      console.log("Total de líneas:", lines.length);
+      lines.forEach((line, idx) => console.log(`Línea ${idx}: "${line}"`));
       
       let apellidoPaterno = '';
       let nombre = '';
       
-      // Método 1: Buscar líneas que contengan solo letras mayúsculas (típico de nombres en INE)
-      const nameLines = lines.filter(line => {
-        const cleanLine = line.trim();
-        // Debe tener entre 3 y 40 caracteres, solo letras mayúsculas y espacios
-        return /^[A-ZÁÉÍÓÚÑ\s]{3,40}$/.test(cleanLine);
-      });
-      
-      console.log("Líneas de nombre potenciales:", nameLines);
+      // ESTRATEGIA 1: Buscar líneas que son solo letras mayúsculas y espacios (nombres típicos en INE)
+      console.log("\n--- ESTRATEGIA 1: Líneas en mayúsculas ---");
+      const nameLines = [];
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        // Debe ser principalmente letras mayúsculas, puede tener espacios
+        const uppercaseRatio = (line.match(/[A-ZÁÉÍÓÚÑ]/g) || []).length / line.length;
+        if (uppercaseRatio > 0.7 && line.length >= 3 && line.length <= 40) {
+          nameLines.push(line);
+          console.log(`✓ Candidato ${nameLines.length}: "${line}" (ratio: ${uppercaseRatio.toFixed(2)})`);
+        }
+      }
       
       if (nameLines.length >= 2) {
-        apellidoPaterno = nameLines[0].trim();
-        nombre = nameLines[1].trim();
-        console.log("Método 1 exitoso - Apellido:", apellidoPaterno, "Nombre:", nombre);
+        apellidoPaterno = nameLines[0];
+        nombre = nameLines[1];
+        console.log(`✅ ESTRATEGIA 1 EXITOSA - Apellido: "${apellidoPaterno}", Nombre: "${nombre}"`);
       }
       
-      // Método 2: Buscar por palabras clave
+      // ESTRATEGIA 2: Buscar palabras clave específicas de INE
       if (!apellidoPaterno || !nombre) {
-        const upperText = text.toUpperCase();
-        
-        // Buscar patrón: APELLIDOS seguido de texto
-        const apellidoMatch = upperText.match(/(?:APELLIDOS?|APELLIDO\s*PATERNO)[:\s]*([A-ZÁÉÍÓÚÑ\s]{3,30})/);
-        if (apellidoMatch) {
-          apellidoPaterno = apellidoMatch[1].trim().split(/\s+/).slice(0, 2).join(' ');
-          console.log("Apellido encontrado con patrón:", apellidoPaterno);
+        console.log("\n--- ESTRATEGIA 2: Palabras clave ---");
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].toUpperCase();
+          
+          // Buscar línea que contenga "APELLIDO" seguida de la siguiente línea
+          if (line.includes('APELLIDO') && i + 1 < lines.length) {
+            // La siguiente línea debería ser el apellido
+            const nextLine = lines[i + 1].trim();
+            if (nextLine.match(/^[A-ZÁÉÍÓÚÑ\s]{3,30}$/)) {
+              apellidoPaterno = nextLine;
+              console.log(`✓ Apellido encontrado después de "APELLIDO": "${apellidoPaterno}"`);
+            }
+          }
+          
+          // Buscar línea que contenga "NOMBRE" seguida de la siguiente línea
+          if (line.includes('NOMBRE') && !line.includes('APELLIDO') && i + 1 < lines.length) {
+            const nextLine = lines[i + 1].trim();
+            if (nextLine.match(/^[A-ZÁÉÍÓÚÑ\s]{2,30}$/)) {
+              nombre = nextLine;
+              console.log(`✓ Nombre encontrado después de "NOMBRE": "${nombre}"`);
+            }
+          }
         }
         
-        // Buscar patrón: NOMBRE seguido de texto
-        const nombreMatch = upperText.match(/NOMBRE[S]?[:\s]*([A-ZÁÉÍÓÚÑ\s]{2,30})/);
-        if (nombreMatch) {
-          nombre = nombreMatch[1].trim().split(/\s+/).slice(0, 3).join(' ');
-          console.log("Nombre encontrado con patrón:", nombre);
+        if (apellidoPaterno && nombre) {
+          console.log(`✅ ESTRATEGIA 2 EXITOSA - Apellido: "${apellidoPaterno}", Nombre: "${nombre}"`);
         }
       }
       
-      // Método 3: Tomar las primeras palabras en mayúsculas del texto
+      // ESTRATEGIA 3: Extraer palabras en mayúsculas del texto completo
       if (!apellidoPaterno || !nombre) {
-        const words = cleanText.split(' ').filter(w => w.length > 2 && /^[A-ZÁÉÍÓÚÑ]+$/.test(w));
-        console.log("Palabras en mayúsculas:", words);
+        console.log("\n--- ESTRATEGIA 3: Palabras en mayúsculas ---");
+        const allText = lines.join(' ');
+        const words = allText.match(/[A-ZÁÉÍÓÚÑ]{3,}/g) || [];
+        console.log("Palabras en mayúsculas encontradas:", words);
         
         if (words.length >= 2) {
-          apellidoPaterno = words[0];
-          nombre = words.slice(1, 3).join(' ');
-          console.log("Método 3 - Apellido:", apellidoPaterno, "Nombre:", nombre);
+          // Filtrar palabras comunes que no son nombres
+          const commonWords = ['INSTITUTO', 'NACIONAL', 'ELECTORAL', 'MEXICO', 'ESTADOS', 'UNIDOS', 'MEXICANOS', 'CREDENCIAL', 'VOTAR', 'PARA'];
+          const nameWords = words.filter(w => !commonWords.includes(w) && w.length >= 3);
+          console.log("Palabras filtradas:", nameWords);
+          
+          if (nameWords.length >= 2) {
+            apellidoPaterno = nameWords[0];
+            nombre = nameWords.slice(1, Math.min(4, nameWords.length)).join(' ');
+            console.log(`✅ ESTRATEGIA 3 EXITOSA - Apellido: "${apellidoPaterno}", Nombre: "${nombre}"`);
+          }
         }
       }
       
-      // Si aún no tenemos datos, intentar extraer cualquier texto
-      if (!apellidoPaterno && !nombre) {
-        const allWords = lines
-          .filter(l => l.length > 2)
-          .map(l => l.toUpperCase().trim());
-        
-        if (allWords.length >= 2) {
-          apellidoPaterno = allWords[0];
-          nombre = allWords[1];
-          console.log("Método de respaldo - Apellido:", apellidoPaterno, "Nombre:", nombre);
+      // ESTRATEGIA 4: Tomar las primeras líneas no vacías
+      if (!apellidoPaterno || !nombre) {
+        console.log("\n--- ESTRATEGIA 4: Primeras líneas ---");
+        const validLines = lines.filter(l => l.length >= 3 && l.length <= 40);
+        if (validLines.length >= 2) {
+          apellidoPaterno = validLines[0];
+          nombre = validLines[1];
+          console.log(`✅ ESTRATEGIA 4 (respaldo) - Apellido: "${apellidoPaterno}", Nombre: "${nombre}"`);
         }
       }
 
+      // Validar resultado
       if (!apellidoPaterno && !nombre) {
-        console.log("❌ No se pudo extraer ningún dato del texto OCR");
+        console.log("❌ FALLO: No se pudo extraer ningún dato");
         return null;
       }
 
@@ -196,11 +233,15 @@ export default function INEOCRReader() {
         rawText: text
       };
       
-      console.log("✅ Resultado final:", result);
+      console.log("\n========== RESULTADO FINAL ==========");
+      console.log("Apellido Paterno:", result.apellidoPaterno);
+      console.log("Nombre(s):", result.nombre);
+      console.log("=====================================\n");
+      
       return result;
       
     } catch (error) {
-      console.error('❌ Error parsing OCR:', error);
+      console.error('❌ Error en parseo OCR:', error);
       return null;
     }
   };
@@ -208,6 +249,7 @@ export default function INEOCRReader() {
   const resetReader = () => {
     setIneData(null);
     setFlowStep('capture');
+    setCapturedImage(null);
     setDebugLog((prev) => [...prev, "Reiniciando..."]);
   };
 
@@ -241,6 +283,15 @@ export default function INEOCRReader() {
             }}>
             {isProcessing ? "Procesando..." : "Capturar Credencial"}
           </button>
+
+          {/* Mostrar imagen capturada mientras procesa */}
+          {capturedImage && isProcessing && (
+            <div style={{ marginTop: "20px" }}>
+              <h3 style={{ color: "white" }}>Imagen Capturada:</h3>
+              <img src={capturedImage} alt="Credencial capturada" 
+                style={{ maxWidth: "90%", maxHeight: "300px", border: "2px solid white", borderRadius: "8px" }} />
+            </div>
+          )}
         </>
       )}
 
