@@ -129,19 +129,56 @@ export default function SimpleQRReader() {
     <div style={{ textAlign: "center", padding: "10px" }}>
       <h2>Lector QR / PDF417 con soporte INE</h2>
       
-      <div style={{ margin: "10px auto", padding: "15px", background: "#f0f0f0", borderRadius: "8px", maxWidth: "600px" }}>
-        <label style={{ display: "block", marginBottom: "8px", fontWeight: "bold" }}>
-          Zoom: {zoom.toFixed(1)}x
+      <div style={{ margin: "10px auto", padding: "20px", background: "#fff", borderRadius: "12px", maxWidth: "600px", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>
+        <label style={{ display: "block", marginBottom: "15px", fontWeight: "bold", fontSize: "1.1em", textAlign: "center" }}>
+          🔍 Zoom: {zoom.toFixed(1)}x
         </label>
         <input type="range" min="1" max="3" step="0.1" value={zoom}
           onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
-          style={{ width: "100%", cursor: "pointer" }} />
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85em", color: "#666", marginTop: "5px" }}>
+          style={{ width: "100%", cursor: "pointer", height: "40px" }} />
+        <div style={{ display: "flex", gap: "10px", marginTop: "15px" }}>
           <button onClick={() => handleZoomChange(1)}
-            style={{ padding: "5px 15px", borderRadius: "4px", border: "1px solid #ccc", background: "#fff", cursor: "pointer" }}>
-            Reset Zoom
+            style={{ 
+              flex: 1,
+              padding: "12px 20px", 
+              borderRadius: "8px", 
+              border: "2px solid #667eea", 
+              background: zoom === 1 ? "#667eea" : "#fff", 
+              color: zoom === 1 ? "white" : "#667eea",
+              cursor: "pointer",
+              fontWeight: "bold",
+              fontSize: "1em"
+            }}>
+            1x
           </button>
-          <span>Ajusta el zoom</span>
+          <button onClick={() => handleZoomChange(2)}
+            style={{ 
+              flex: 1,
+              padding: "12px 20px", 
+              borderRadius: "8px", 
+              border: "2px solid #667eea", 
+              background: zoom === 2 ? "#667eea" : "#fff", 
+              color: zoom === 2 ? "white" : "#667eea",
+              cursor: "pointer",
+              fontWeight: "bold",
+              fontSize: "1em"
+            }}>
+            2x
+          </button>
+          <button onClick={() => handleZoomChange(3)}
+            style={{ 
+              flex: 1,
+              padding: "12px 20px", 
+              borderRadius: "8px", 
+              border: "2px solid #667eea", 
+              background: zoom === 3 ? "#667eea" : "#fff", 
+              color: zoom === 3 ? "white" : "#667eea",
+              cursor: "pointer",
+              fontWeight: "bold",
+              fontSize: "1em"
+            }}>
+            3x
+          </button>
         </div>
       </div>
       
