@@ -103,55 +103,104 @@ export default function INEOCRReader() {
 
   const parseINEFromOCR = (text: string): INEDataOCR | null => {
     try {
-      console.log("Parseando texto OCR:", text);
+      console.log("========== TEXTO COMPLETO OCR ==========");
+      console.log(text);
+      console.log("========================================");
       
-      // Extraer nombre y apellido paterno
-      const lines = text.split('\n').filter(l => l.trim().length > 2);
+      // Limpiar y normalizar el texto
+      const cleanText = text
+        .replace(/[^\w\sÁÉÍÓÚÑáéíóúñ]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .toUpperCase()
+        .trim();
+      
+      console.log("Texto limpio:", cleanText);
+      
+      // Dividir en líneas y filtrar vacías
+      const lines = text.split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0);
+      
+      console.log("Líneas detectadas:", lines);
+      
       let apellidoPaterno = '';
       let nombre = '';
       
-      // Buscar patrones comunes en credenciales INE
-      for (let i = 0; i < Math.min(lines.length, 15); i++) {
-        const line = lines[i].trim().toUpperCase();
-        
-        // Buscar líneas con solo letras mayúsculas (nombres en INE)
-        if (line.match(/^[A-ZÁÉÍÓÚÑ\s]{3,50}$/)) {
-          if (!apellidoPaterno && line.length > 3) {
-            apellidoPaterno = line;
-            console.log("Apellido Paterno detectado:", line);
-          } else if (!nombre && line.length > 2 && apellidoPaterno) {
-            nombre = line;
-            console.log("Nombre detectado:", line);
-            break;
-          }
-        }
+      // Método 1: Buscar líneas que contengan solo letras mayúsculas (típico de nombres en INE)
+      const nameLines = lines.filter(line => {
+        const cleanLine = line.trim();
+        // Debe tener entre 3 y 40 caracteres, solo letras mayúsculas y espacios
+        return /^[A-ZÁÉÍÓÚÑ\s]{3,40}$/.test(cleanLine);
+      });
+      
+      console.log("Líneas de nombre potenciales:", nameLines);
+      
+      if (nameLines.length >= 2) {
+        apellidoPaterno = nameLines[0].trim();
+        nombre = nameLines[1].trim();
+        console.log("Método 1 exitoso - Apellido:", apellidoPaterno, "Nombre:", nombre);
       }
-
-      // Si no se encontró por el método anterior, buscar palabras clave
+      
+      // Método 2: Buscar por palabras clave
       if (!apellidoPaterno || !nombre) {
         const upperText = text.toUpperCase();
-        const nameMatch = upperText.match(/APELLIDOS?\s*([A-ZÁÉÍÓÚÑ\s]+)\s+NOMBRE/);
-        if (nameMatch) {
-          apellidoPaterno = nameMatch[1].trim();
+        
+        // Buscar patrón: APELLIDOS seguido de texto
+        const apellidoMatch = upperText.match(/(?:APELLIDOS?|APELLIDO\s*PATERNO)[:\s]*([A-ZÁÉÍÓÚÑ\s]{3,30})/);
+        if (apellidoMatch) {
+          apellidoPaterno = apellidoMatch[1].trim().split(/\s+/).slice(0, 2).join(' ');
+          console.log("Apellido encontrado con patrón:", apellidoPaterno);
         }
-        const firstNameMatch = upperText.match(/NOMBRE[S]?\s*([A-ZÁÉÍÓÚÑ\s]+)/);
-        if (firstNameMatch) {
-          nombre = firstNameMatch[1].trim().split(/\s+/).slice(0, 3).join(' ');
+        
+        // Buscar patrón: NOMBRE seguido de texto
+        const nombreMatch = upperText.match(/NOMBRE[S]?[:\s]*([A-ZÁÉÍÓÚÑ\s]{2,30})/);
+        if (nombreMatch) {
+          nombre = nombreMatch[1].trim().split(/\s+/).slice(0, 3).join(' ');
+          console.log("Nombre encontrado con patrón:", nombre);
+        }
+      }
+      
+      // Método 3: Tomar las primeras palabras en mayúsculas del texto
+      if (!apellidoPaterno || !nombre) {
+        const words = cleanText.split(' ').filter(w => w.length > 2 && /^[A-ZÁÉÍÓÚÑ]+$/.test(w));
+        console.log("Palabras en mayúsculas:", words);
+        
+        if (words.length >= 2) {
+          apellidoPaterno = words[0];
+          nombre = words.slice(1, 3).join(' ');
+          console.log("Método 3 - Apellido:", apellidoPaterno, "Nombre:", nombre);
+        }
+      }
+      
+      // Si aún no tenemos datos, intentar extraer cualquier texto
+      if (!apellidoPaterno && !nombre) {
+        const allWords = lines
+          .filter(l => l.length > 2)
+          .map(l => l.toUpperCase().trim());
+        
+        if (allWords.length >= 2) {
+          apellidoPaterno = allWords[0];
+          nombre = allWords[1];
+          console.log("Método de respaldo - Apellido:", apellidoPaterno, "Nombre:", nombre);
         }
       }
 
       if (!apellidoPaterno && !nombre) {
-        console.log("No se encontró nombre ni apellido en el texto OCR");
+        console.log("❌ No se pudo extraer ningún dato del texto OCR");
         return null;
       }
 
-      return {
+      const result = {
         apellidoPaterno: apellidoPaterno || 'NO DETECTADO',
         nombre: nombre || 'NO DETECTADO',
         rawText: text
       };
+      
+      console.log("✅ Resultado final:", result);
+      return result;
+      
     } catch (error) {
-      console.error('Error parsing OCR:', error);
+      console.error('❌ Error parsing OCR:', error);
       return null;
     }
   };
@@ -163,13 +212,13 @@ export default function INEOCRReader() {
   };
 
   return (
-    <div style={{ textAlign: "center", padding: "10px" }}>
-      <h2>Validación de Acceso con INE</h2>
+    <div style={{ textAlign: "center", padding: "10px", background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", minHeight: "100vh" }}>
+      <h2 style={{ color: "white", paddingTop: "20px" }}>Validación de Acceso con INE - NUEVA VERSIÓN</h2>
 
       {/* PASO 1: CAPTURA DE CREDENCIAL */}
       {flowStep === 'capture' && (
         <>
-          <p style={{ fontSize: "0.9em", color: "#666" }}>
+          <p style={{ fontSize: "0.9em", color: "white" }}>
             Coloca la parte FRONTAL de la credencial INE frente a la cámara
           </p>
 
