@@ -20,6 +20,7 @@ export default function INEOCRReader() {
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('horizontal');
+  const [showingPreview, setShowingPreview] = useState(false);
 
   useEffect(() => {
     if (flowStep === 'capture') {
@@ -70,6 +71,164 @@ export default function INEOCRReader() {
       }
     };
   }, [flowStep, zoomLevel, orientation]);
+
+  // PASO 1: Solo capturar la imagen
+  const captureImage = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+
+    setDebugLog(prev => [...prev, "📸 Capturando imagen..."]);
+
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    
+    // Configurar canvas con mejor resolución, respetando orientación
+    if (orientation === 'vertical') {
+      canvas.width = video.videoHeight;
+      canvas.height = video.videoWidth;
+    } else {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+    }
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Dibujar la imagen del video con rotación si es necesario
+    if (orientation === 'vertical') {
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate(90 * Math.PI / 180);
+      ctx.drawImage(video, -video.videoWidth / 2, -video.videoHeight / 2, video.videoWidth, video.videoHeight);
+    } else {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    }
+    
+    // Mejorar el contraste y brillo
+    setDebugLog(prev => [...prev, "🎨 Mejorando calidad de imagen..."]);
+    const imageDataObj = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageDataObj.data;
+    
+    const factor = 1.5;
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = Math.min(255, data[i] * factor);
+      data[i + 1] = Math.min(255, data[i + 1] * factor);
+      data[i + 2] = Math.min(255, data[i + 2] * factor);
+    }
+    ctx.putImageData(imageDataObj, 0, 0);
+    
+    const imageData = canvas.toDataURL('image/png', 1.0);
+    setCapturedImage(imageData);
+    setShowingPreview(true);
+    setDebugLog(prev => [...prev, "✅ Imagen capturada. Revisa y procesa."]);
+  };
+
+  // PASO 2: Procesar OCR sobre la imagen ya capturada
+  const processOCR = async () => {
+    if (!capturedImage || !canvasRef.current) return;
+
+    setIsProcessing(true);
+    setDebugLog(prev => [...prev, "🔍 Procesando regiones específicas del INE..."]);
+
+    try {
+      // Crear un canvas desde la imagen capturada
+      const img = new Image();
+      img.src = capturedImage;
+      
+      await new Promise((resolve) => {
+        img.onload = resolve;
+      });
+
+      const canvas = canvasRef.current;
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      
+      ctx.drawImage(img, 0, 0);
+
+      // Procesar por regiones específicas del INE
+      // Región superior izquierda: APELLIDO PATERNO (aprox 15-30% altura, 5-50% ancho)
+      const apellidoCanvas = document.createElement('canvas');
+      apellidoCanvas.width = canvas.width * 0.45;
+      apellidoCanvas.height = canvas.height * 0.15;
+      const apellidoCtx = apellidoCanvas.getContext('2d');
+      if (apellidoCtx) {
+        apellidoCtx.drawImage(
+          canvas,
+          canvas.width * 0.05, canvas.height * 0.15, // source x, y
+          canvas.width * 0.45, canvas.height * 0.15, // source width, height
+          0, 0, // dest x, y
+          apellidoCanvas.width, apellidoCanvas.height // dest width, height
+        );
+      }
+      
+      // Región para NOMBRE (aprox 30-45% altura, 5-50% ancho)
+      const nombreCanvas = document.createElement('canvas');
+      nombreCanvas.width = canvas.width * 0.45;
+      nombreCanvas.height = canvas.height * 0.15;
+      const nombreCtx = nombreCanvas.getContext('2d');
+      if (nombreCtx) {
+        nombreCtx.drawImage(
+          canvas,
+          canvas.width * 0.05, canvas.height * 0.30,
+          canvas.width * 0.45, canvas.height * 0.15,
+          0, 0,
+          nombreCanvas.width, nombreCanvas.height
+        );
+      }
+
+      setDebugLog(prev => [...prev, "📖 Leyendo APELLIDO PATERNO..."]);
+      const apellidoResult = await Tesseract.recognize(apellidoCanvas.toDataURL(), 'spa', {
+        logger: (m) => {
+          if (m.status === 'recognizing text') {
+            const progress = Math.round(m.progress * 100);
+            if (progress % 25 === 0) {
+              setDebugLog(prev => [...prev, `⏳ Apellido: ${progress}%`]);
+            }
+          }
+        }
+      });
+
+      setDebugLog(prev => [...prev, "📖 Leyendo NOMBRE(S)..."]);
+      const nombreResult = await Tesseract.recognize(nombreCanvas.toDataURL(), 'spa', {
+        logger: (m) => {
+          if (m.status === 'recognizing text') {
+            const progress = Math.round(m.progress * 100);
+            if (progress % 25 === 0) {
+              setDebugLog(prev => [...prev, `⏳ Nombre: ${progress}%`]);
+            }
+          }
+        }
+      });
+
+      const apellidoText = apellidoResult.data.text.trim();
+      const nombreText = nombreResult.data.text.trim();
+
+      console.log("========== TEXTO POR REGIONES ==========");
+      console.log("Apellido detectado:", apellidoText);
+      console.log("Nombre detectado:", nombreText);
+      console.log("========================================");
+
+      const parsed = parseINEFromRegions(apellidoText, nombreText);
+      
+      if (parsed && (parsed.apellidoPaterno || parsed.nombre)) {
+        setIneData(parsed);
+        setDebugLog(prev => [...prev, "✅ INE procesada: " + parsed.apellidoPaterno + " " + parsed.nombre]);
+        setFlowStep('validated');
+      } else {
+        setDebugLog(prev => [...prev, "❌ No se detectaron datos válidos. Intenta capturar de nuevo."]);
+      }
+    } catch (error: any) {
+      setDebugLog(prev => [...prev, "❌ ERROR OCR: " + error.message]);
+    }
+
+    setIsProcessing(false);
+  };
+
+  const retakePhoto = () => {
+    setCapturedImage(null);
+    setShowingPreview(false);
+    setDebugLog(prev => [...prev, "🔄 Listo para nueva captura"]);
+  };
 
   const captureAndProcess = async () => {
     if (!videoRef.current || !canvasRef.current) return;
@@ -374,7 +533,8 @@ export default function INEOCRReader() {
     setIneData(null);
     setFlowStep('capture');
     setCapturedImage(null);
-    setDebugLog((prev) => [...prev, "Reiniciando..."]);
+    setShowingPreview(false);
+    setDebugLog((prev) => [...prev, "🔄 Reiniciando..."]);
   };
 
   return (
@@ -441,75 +601,77 @@ export default function INEOCRReader() {
             </button>
           </div>
 
-          {/* Vista de cámara con guías de región */}
-          <div style={{ position: "relative", display: "inline-block", margin: "0 auto" }}>
-            <video ref={videoRef} autoPlay muted playsInline 
-              style={{ 
-                width: "90%", 
-                maxWidth: 600, 
-                border: "2px solid #333", 
-                borderRadius: "8px", 
-                marginBottom: "15px",
-                transform: orientation === 'vertical' ? 'rotate(90deg)' : 'none',
-                display: "block"
-              }} />
+          {/* Vista de cámara con guías de región - Solo si NO estamos mostrando preview */}
+          {!showingPreview && (
+            <div style={{ position: "relative", display: "inline-block", margin: "0 auto" }}>
+              <video ref={videoRef} autoPlay muted playsInline 
+                style={{ 
+                  width: "90%", 
+                  maxWidth: 600, 
+                  border: "2px solid #333", 
+                  borderRadius: "8px", 
+                  marginBottom: "15px",
+                  transform: orientation === 'vertical' ? 'rotate(90deg)' : 'none',
+                  display: "block"
+                }} />
 
-            {/* Guías superpuestas - APELLIDO PATERNO */}
-            <div style={{
-              position: "absolute",
-              top: "15%",
-              left: "5%",
-              width: "45%",
-              height: "15%",
-              border: "3px dashed rgba(255, 215, 0, 0.9)",
-              background: "rgba(255, 215, 0, 0.15)",
-              pointerEvents: "none",
-              borderRadius: "4px"
-            }}>
+              {/* Guías superpuestas - APELLIDO PATERNO */}
               <div style={{
                 position: "absolute",
-                top: "-28px",
-                left: "0",
-                background: "rgba(255, 215, 0, 0.95)",
-                color: "#000",
-                padding: "4px 10px",
-                borderRadius: "4px",
-                fontSize: "0.75em",
-                fontWeight: "bold",
-                boxShadow: "0 2px 4px rgba(0,0,0,0.3)"
+                top: "15%",
+                left: "5%",
+                width: "45%",
+                height: "15%",
+                border: "3px dashed rgba(255, 215, 0, 0.9)",
+                background: "rgba(255, 215, 0, 0.15)",
+                pointerEvents: "none",
+                borderRadius: "4px"
               }}>
-                APELLIDO PATERNO
+                <div style={{
+                  position: "absolute",
+                  top: "-28px",
+                  left: "0",
+                  background: "rgba(255, 215, 0, 0.95)",
+                  color: "#000",
+                  padding: "4px 10px",
+                  borderRadius: "4px",
+                  fontSize: "0.75em",
+                  fontWeight: "bold",
+                  boxShadow: "0 2px 4px rgba(0,0,0,0.3)"
+                }}>
+                  APELLIDO PATERNO
+                </div>
               </div>
-            </div>
 
-            {/* Guías superpuestas - NOMBRE */}
-            <div style={{
-              position: "absolute",
-              top: "30%",
-              left: "5%",
-              width: "45%",
-              height: "15%",
-              border: "3px dashed rgba(0, 255, 127, 0.9)",
-              background: "rgba(0, 255, 127, 0.15)",
-              pointerEvents: "none",
-              borderRadius: "4px"
-            }}>
+              {/* Guías superpuestas - NOMBRE */}
               <div style={{
                 position: "absolute",
-                top: "-28px",
-                left: "0",
-                background: "rgba(0, 255, 127, 0.95)",
-                color: "#000",
-                padding: "4px 10px",
-                borderRadius: "4px",
-                fontSize: "0.75em",
-                fontWeight: "bold",
-                boxShadow: "0 2px 4px rgba(0,0,0,0.3)"
+                top: "30%",
+                left: "5%",
+                width: "45%",
+                height: "15%",
+                border: "3px dashed rgba(0, 255, 127, 0.9)",
+                background: "rgba(0, 255, 127, 0.15)",
+                pointerEvents: "none",
+                borderRadius: "4px"
               }}>
-                NOMBRE(S)
+                <div style={{
+                  position: "absolute",
+                  top: "-28px",
+                  left: "0",
+                  background: "rgba(0, 255, 127, 0.95)",
+                  color: "#000",
+                  padding: "4px 10px",
+                  borderRadius: "4px",
+                  fontSize: "0.75em",
+                  fontWeight: "bold",
+                  boxShadow: "0 2px 4px rgba(0,0,0,0.3)"
+                }}>
+                  NOMBRE(S)
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           <canvas ref={canvasRef} style={{ display: "none" }} />
 
@@ -568,28 +730,76 @@ export default function INEOCRReader() {
             </button>
           </div>
 
-          <button onClick={captureAndProcess} disabled={isProcessing}
-            style={{ 
-              padding: "15px 40px", 
-              fontSize: "1.2em", 
-              borderRadius: "8px", 
-              border: "none", 
-              background: isProcessing ? "#ccc" : "#667eea", 
-              color: "white", 
-              cursor: isProcessing ? "wait" : "pointer", 
-              fontWeight: "bold",
-              marginBottom: "20px"
-            }}>
-            {isProcessing ? "Procesando..." : "Capturar Credencial"}
-          </button>
+          {/* Mostrar cámara en vivo O imagen capturada */}
+          {!showingPreview ? (
+            <>
+              <button 
+                onClick={captureImage}
+                style={{ 
+                  padding: "15px 40px", 
+                  fontSize: "1.2em", 
+                  borderRadius: "8px", 
+                  border: "none", 
+                  background: "#667eea", 
+                  color: "white", 
+                  cursor: "pointer", 
+                  fontWeight: "bold",
+                  marginBottom: "20px"
+                }}>
+                📸 Capturar Foto
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Mostrar imagen capturada con opciones */}
+              <div style={{ marginTop: "20px", marginBottom: "20px" }}>
+                <h3 style={{ color: "white" }}>✅ Imagen Capturada:</h3>
+                <img src={capturedImage || ''} alt="Credencial capturada" 
+                  style={{ 
+                    maxWidth: "90%", 
+                    maxHeight: "400px", 
+                    border: "3px solid white", 
+                    borderRadius: "8px",
+                    marginBottom: "20px",
+                    boxShadow: "0 4px 10px rgba(0,0,0,0.3)"
+                  }} />
+                
+                <div style={{ display: "flex", gap: "15px", justifyContent: "center", flexWrap: "wrap" }}>
+                  <button 
+                    onClick={retakePhoto}
+                    disabled={isProcessing}
+                    style={{ 
+                      padding: "12px 30px", 
+                      fontSize: "1.1em", 
+                      borderRadius: "8px", 
+                      border: "2px solid white", 
+                      background: "transparent", 
+                      color: "white", 
+                      cursor: isProcessing ? "not-allowed" : "pointer", 
+                      fontWeight: "bold"
+                    }}>
+                    🔄 Tomar Otra Foto
+                  </button>
 
-          {/* Mostrar imagen capturada mientras procesa */}
-          {capturedImage && isProcessing && (
-            <div style={{ marginTop: "20px" }}>
-              <h3 style={{ color: "white" }}>Imagen Capturada:</h3>
-              <img src={capturedImage} alt="Credencial capturada" 
-                style={{ maxWidth: "90%", maxHeight: "300px", border: "2px solid white", borderRadius: "8px" }} />
-            </div>
+                  <button 
+                    onClick={processOCR}
+                    disabled={isProcessing}
+                    style={{ 
+                      padding: "12px 30px", 
+                      fontSize: "1.1em", 
+                      borderRadius: "8px", 
+                      border: "none", 
+                      background: isProcessing ? "#ccc" : "#38ef7d", 
+                      color: isProcessing ? "#666" : "#000", 
+                      cursor: isProcessing ? "wait" : "pointer", 
+                      fontWeight: "bold",
+                      boxShadow: isProcessing ? "none" : "0 4px 10px rgba(0,0,0,0.3)"
+                    }}>
+                    {isProcessing ? "⏳ Procesando OCR..." : "✅ Procesar OCR"}
+                  </button>
+                </div>
+              </div>
+            </>
           )}
         </>
       )}
