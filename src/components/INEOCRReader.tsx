@@ -94,7 +94,7 @@ const INEOCRReader: React.FC = () => {
       console.log('📤 Tamaño de imagen:', croppedImage.length, 'bytes');
       
       const apiUrl = import.meta.env.PROD 
-        ? 'https://camara2-lqq498reg-salvador-ruiz-esparzas-projects.vercel.app'
+        ? 'https://camara2-neon.vercel.app'
         : '';
       const endpoint = apiUrl ? `${apiUrl}/api/vision` : '/api/vision';
       
