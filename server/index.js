@@ -10,13 +10,19 @@ const PORT = process.env.PORT || 3001;
 // Habilitar CORS
 const cors = require('cors');
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://b10sp4rt4n.github.io'] 
-    : '*',
-  credentials: true
+  origin: '*',
+  credentials: false,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Server is running' });
+});
 
 app.post('/api/vision', async (req, res) => {
   const { image } = req.body;
