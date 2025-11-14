@@ -91,12 +91,15 @@ const INEOCRReader: React.FC = () => {
     try {
       console.log('✂️ Recortando área de texto...');
       const croppedImage = await cropImageToTextArea(photo);
-      console.log('📤 Enviando imagen recortada a backend...');
+      console.log('📤 Tamaño de imagen:', croppedImage.length, 'bytes');
       
       const apiUrl = import.meta.env.PROD 
         ? 'https://camara2-lqq498reg-salvador-ruiz-esparzas-projects.vercel.app'
         : '';
       const endpoint = apiUrl ? `${apiUrl}/api/vision` : '/api/vision';
+      
+      console.log('🌐 URL del backend:', endpoint);
+      console.log('📤 Enviando imagen recortada a backend...');
       
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -109,15 +112,17 @@ const INEOCRReader: React.FC = () => {
       if (!response.ok) {
         const errorText = await response.text();
         console.error('❌ Error del servidor:', errorText);
-        throw new Error(`Error del servidor: ${response.status}`);
+        throw new Error(`Error del servidor: ${response.status} - ${errorText}`);
       }
       
       const data = await response.json();
       console.log('✅ Datos recibidos:', data);
       setResult(data.text || 'Sin resultado');
     } catch (err: any) {
-      console.error('💥 Error al procesar:', err.message);
-      setError('Error al procesar la imagen: ' + err.message);
+      console.error('💥 Error completo:', err);
+      console.error('💥 Error mensaje:', err.message);
+      console.error('💥 Error stack:', err.stack);
+      setError('Error: ' + (err.message || 'Desconocido'));
     }
     setLoading(false);
   };
