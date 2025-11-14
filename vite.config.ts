@@ -5,8 +5,14 @@ export default defineConfig({
   plugins: [react()],
   base: '/Camara/',
   server: {
-    port: 5191,
+    port: 5200,
     strictPort: true,
-    host: true
+    host: true,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true
+      }
+    }
   }
 });
