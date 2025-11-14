@@ -12,7 +12,7 @@ const INEOCRReader: React.FC = () => {
     const startCamera = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: 'environment' } // Cámara trasera
+          video: { facingMode: 'user' } // Cámara frontal
         });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
