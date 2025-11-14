@@ -131,3 +131,6 @@ app.post('/api/vision', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Vision backend running on port ${PORT}`);
 });
+
+// Export for Vercel serverless
+module.exports = app;

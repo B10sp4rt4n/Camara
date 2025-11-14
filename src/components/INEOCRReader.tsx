@@ -94,7 +94,7 @@ const INEOCRReader: React.FC = () => {
       console.log('📤 Tamaño de imagen:', croppedImage.length, 'bytes');
       
       const apiUrl = import.meta.env.PROD 
-        ? 'https://camara2-neon.vercel.app'
+        ? 'https://sturdy-acorn-x5pvqpjg9w9whpgrw-3001.app.github.dev'
         : '';
       const endpoint = apiUrl ? `${apiUrl}/api/vision` : '/api/vision';
       
