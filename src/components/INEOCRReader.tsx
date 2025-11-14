@@ -91,7 +91,9 @@ const INEOCRReader: React.FC = () => {
       const croppedImage = await cropImageToTextArea(photo);
       console.log('📤 Enviando imagen recortada a backend...');
       
-      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const apiUrl = import.meta.env.PROD 
+        ? 'https://camara2-lqq498reg-salvador-ruiz-esparzas-projects.vercel.app'
+        : '';
       const endpoint = apiUrl ? `${apiUrl}/api/vision` : '/api/vision';
       
       const response = await fetch(endpoint, {
